@@ -14,7 +14,8 @@ interface ChatScreenProps {
 }
 
 // Utility to compress image to prevent P2P data choke
-const compressImage = (base64: string, maxWidth = 800, quality = 0.7): Promise<string> => {
+// Adjusted to 600px and 0.6 quality to ensure high deliverability over P2P
+const compressImage = (base64: string, maxWidth = 600, quality = 0.6): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64;
@@ -94,7 +95,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       // If sent by me, force scroll. If I am at bottom, auto scroll.
       if (lastMsg.senderId === currentUser?.id || isAtBottom) {
         // Small timeout to allow render to finish (especially for images)
-        setTimeout(scrollToBottom, 50);
+        setTimeout(scrollToBottom, 100);
       } else {
         setUnreadCount(prev => prev + 1);
         if (isMention) setHasUnreadMention(true);
@@ -104,7 +105,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     // Update ref for next run
     prevMessagesLengthRef.current = state.messages.length;
     
-  }, [state.messages, currentUser]); // Removed isAtBottom from deps to prevent scroll jumping on scroll event
+  }, [state.messages, currentUser, isAtBottom]);
 
   // --- Search & Typing ---
 

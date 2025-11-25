@@ -281,7 +281,7 @@ export const usePeerChat = () => {
       name: username, 
       color: currentUser?.color || getRandomColor(), 
       isHost: false, 
-      status: 'online',
+      status: 'online', 
       isMuted: false 
     };
     
@@ -380,13 +380,6 @@ export const usePeerChat = () => {
         
         broadcast({ type: 'user_list_update', payload: newUsers });
         
-        // Use Ref for latest messages to ensure we send full history including just added ones
-        setTimeout(() => {
-           if (senderConn.open) {
-             senderConn.send({ type: 'history_sync', payload: messagesRef.current });
-           }
-        }, 100);
-        
         return { ...prev, users: newUsers };
       });
 
@@ -398,8 +391,23 @@ export const usePeerChat = () => {
         timestamp: Date.now(),
         type: MessageType.SYSTEM
       };
+      
+      // Update local state
       addMessage(sysMsg);
+      // Broadcast to others
       broadcast({ type: 'message', payload: sysMsg });
+
+      // CRITICAL FIX: Manually construct history payload including the new system message
+      // This ensures the new user sees the "Joined" message in history immediately
+      // without relying on React's async state update.
+      const historyToSync = [...messagesRef.current, sysMsg];
+
+      // Send history to NEW user only with a slight delay to ensure connection readiness
+      setTimeout(() => {
+         if (senderConn.open) {
+             senderConn.send({ type: 'history_sync', payload: historyToSync });
+         }
+      }, 800);
 
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
@@ -478,6 +486,9 @@ export const usePeerChat = () => {
       addMessage(data.payload);
     } else if (data.type === 'history_sync') {
       const history = data.payload as Message[];
+      // Verify history is array before processing
+      if (!Array.isArray(history)) return;
+
       const historyIds = new Set(history.map(m => m.id));
 
       setState(prev => {
