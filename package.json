@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^0.1.1",
+    "@google/genai": "*",
     "emoji-picker-react": "^4.9.2",
     "lucide-react": "^0.344.0",
     "peerjs": "^1.5.2",
