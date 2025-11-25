@@ -24,9 +24,9 @@ export const generateAIResponse = async (
 
   try {
     // Transform history into OpenAI compatible format
-    // Take last 15 messages to maintain context without exceeding limits
+    // Increased to last 30 messages to provide better short-term memory
     const conversationHistory = history
-      .slice(-15)
+      .slice(-30)
       .map(m => {
         const role = m.type === MessageType.AI ? "assistant" : "user";
         // If it's a user message, include their name for context
@@ -37,23 +37,13 @@ export const generateAIResponse = async (
         return { role, content };
       });
 
-    // Add current message
-    // Note: We don't add the current message to history array yet in the UI when this is called, 
-    // but the caller passes the message string.
-    // However, usually the UI adds the user message FIRST, then calls this. 
-    // If 'history' already contains 'currentMessage', we don't need to append it again.
-    // Based on usePeerChat logic, the message is added to state before calling this.
-    // So currentMessage is likely already the last item in history? 
-    // Actually, usePeerChat passes `state.messages`. 
-    // Let's ensure we don't duplicate the last prompt if it's already in history.
-    
     const messagesPayload = [
       { role: "system", content: SYSTEM_INSTRUCTION },
       ...conversationHistory
     ];
 
     // Double check: if the very last message in history is NOT the current prompt, we append it.
-    // (In case the state update hasn't propagated to the history prop passed here yet)
+    // This handles cases where the state might not have updated yet in the calling component.
     const lastMsg = history[history.length - 1];
     if (!lastMsg || lastMsg.content !== currentMessage) {
         messagesPayload.push({ role: "user", content: currentMessage });

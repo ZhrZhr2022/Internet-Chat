@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ArrowDown, Sparkles } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ArrowDown, Sparkles, AtSign } from 'lucide-react';
 import { usePeerChat } from '../hooks/usePeerChat';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
@@ -33,6 +33,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
   const lastTypingSentRef = useRef<number>(0);
 
@@ -73,7 +74,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       setUnreadCount(prev => prev + 1);
       if (isMention) setHasUnreadMention(true);
     }
-  }, [state.messages, currentUser, isAtBottom]); // removed state.messages.length dependency to rely on array ref change
+  }, [state.messages, currentUser, isAtBottom]);
 
   // --- Search & Typing ---
 
@@ -83,15 +84,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       return;
     }
     const search = mentionSearch.toLowerCase();
+    // Filter users, ensuring no duplicates. 
+    // Nexus AI is in state.users, so it will be included automatically.
     const matches = state.users.filter(u => 
       u.name.toLowerCase().includes(search) && u.id !== currentUser?.id
     );
     
-    // Always add AI for easy access
-    if ('nexus ai'.includes(search) || 'ai'.includes(search)) {
-       const aiUser = { id: 'ai-bot', name: 'Nexus AI', color: '#10b981', isHost: false } as User;
-       matches.push(aiUser);
-    }
     setFilteredUsers(matches);
   }, [mentionSearch, state.users, currentUser]);
 
@@ -142,8 +140,13 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     const newText = [...words, `@${name} `].join(' ');
     setInputValue(newText);
     setMentionSearch(null);
-    const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
-    if(inputEl) inputEl.focus();
+    inputRef.current?.focus();
+  };
+
+  const handleAtButtonClick = () => {
+    setInputValue(prev => prev + '@');
+    setMentionSearch(''); // Trigger empty search to show all users
+    inputRef.current?.focus();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -436,6 +439,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
             <button 
               className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors"
+              onClick={handleAtButtonClick}
+              title="Mention someone"
+            >
+              <AtSign size={24} />
+            </button>
+
+            <button 
+              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors"
               onClick={() => fileInputRef.current?.click()}
             >
               <ImageIcon size={24} />
@@ -450,6 +461,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
             <form onSubmit={handleSendMessage} className="flex-1 flex gap-2">
               <input
+                ref={inputRef}
                 type="text"
                 value={inputValue}
                 onChange={handleInputChange}
