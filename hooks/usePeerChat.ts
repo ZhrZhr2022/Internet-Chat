@@ -9,7 +9,7 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
-// PeerJS Configuration with explicit STUN servers for better connectivity
+// PeerJS Configuration with expanded STUN servers for better NAT traversal
 const PEER_CONFIG = {
   config: {
     iceServers: [
@@ -18,7 +18,10 @@ const PEER_CONFIG = {
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
-    ]
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'stun:stun.services.mozilla.com' }
+    ],
+    iceCandidatePoolSize: 10,
   },
   debug: 1 // Errors only
 };
@@ -37,8 +40,11 @@ export const usePeerChat = () => {
 
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<DataConnection[]>([]);
-  const hostConnectionRef = useRef<DataConnection | null>(null); // For guests
-  const reconnectTimeoutRef = useRef<any>(null);
+  const hostConnectionRef = useRef<DataConnection | null>(null);
+  
+  // Timers
+  const heartbeatTimerRef = useRef<any>(null);
+  const connectionTimeoutRef = useRef<any>(null);
 
   // --- Actions ---
 
@@ -87,8 +93,6 @@ export const usePeerChat = () => {
       payload: { name: currentUser.name, isTyping }
     };
     
-    // Host doesn't need to send to host, but needs to broadcast if logic requires.
-    // However, usually we just broadcast to others.
     if (currentUser.isHost) {
       broadcast(payload);
     } else {
@@ -109,10 +113,8 @@ export const usePeerChat = () => {
       type
     };
 
-    // 1. Optimistic UI update
     addMessage(newMessage);
 
-    // 2. Network transmission
     const payload: PeerData = { type: 'message', payload: newMessage };
     if (currentUser.isHost) {
       broadcast(payload);
@@ -120,7 +122,6 @@ export const usePeerChat = () => {
       sendToHost(payload);
     }
 
-    // 3. AI Trigger (Only Host processes AI to avoid duplicates)
     if (currentUser.isHost && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
       const aiResponseText = await generateAIResponse(content, state.messages);
       
@@ -140,11 +141,25 @@ export const usePeerChat = () => {
 
   // --- Connection Logic ---
 
+  // Keep the signaling connection alive
+  const startHeartbeat = (peer: Peer) => {
+    if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+    
+    heartbeatTimerRef.current = setInterval(() => {
+      if (!peer || peer.destroyed) return;
+      
+      // If disconnected from signaling server, try to reconnect
+      if (peer.disconnected && !peer.destroyed) {
+        console.log('Heartbeat: Reconnecting to signaling server...');
+        peer.reconnect();
+      }
+    }, 5000); // Check every 5 seconds
+  };
+
   const setupCommonPeerEvents = (peer: Peer) => {
-    // Handle disconnection from signaling server (not necessarily from peers)
     peer.on('disconnected', () => {
-      console.warn('Disconnected from signaling server. Attempting reconnect...');
-      // PeerJS specific: IDs remain valid if we reconnect
+      console.warn('Peer disconnected from signaling server.');
+      // Don't change app state to error yet, just try to reconnect via heartbeat or immediately
       if (!peer.destroyed) {
         peer.reconnect();
       }
@@ -152,22 +167,29 @@ export const usePeerChat = () => {
 
     peer.on('close', () => {
       console.error('Peer connection closed completely.');
-      setState(prev => ({ ...prev, status: 'error', error: 'Connection closed.' }));
+      setState(prev => ({ ...prev, status: 'error', error: 'Connection lost. Please reload.' }));
     });
 
     peer.on('error', (err: any) => {
       console.error('Peer error:', err);
-      let errorMessage = 'An error occurred.';
-      
+      // Ignore some non-critical errors or handle them gracefully
       if (err.type === 'peer-unavailable') {
-        errorMessage = 'Room not found or Host is offline.';
-      } else if (err.type === 'unavailable-id') {
-        errorMessage = 'ID collision. Please try again.';
+        setState(prev => ({ 
+          ...prev, 
+          status: 'error', 
+          error: 'Room ID not found. The host might be offline or the ID is incorrect.' 
+        }));
       } else if (err.type === 'network') {
-        errorMessage = 'Network error. check your connection.';
+        // Often temporary, don't kill the app immediately
+        console.warn('Network error detected');
+      } else if (err.type === 'unavailable-id') {
+        setState(prev => ({ ...prev, status: 'error', error: 'ID collision. Please try again.' }));
+      } else {
+        // For other errors during connection phase
+        if (state.status === 'connecting') {
+           setState(prev => ({ ...prev, status: 'error', error: 'Connection failed. Please try again.' }));
+        }
       }
-
-      setState(prev => ({ ...prev, status: 'error', error: errorMessage }));
     });
   };
 
@@ -178,6 +200,9 @@ export const usePeerChat = () => {
     setCurrentUser(user);
     setState(prev => ({ ...prev, status: 'connecting', users: [user] }));
 
+    // Clean up old peer if exists
+    if (peerRef.current) peerRef.current.destroy();
+
     const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
 
@@ -185,6 +210,7 @@ export const usePeerChat = () => {
 
     peer.on('open', (id) => {
       setState(prev => ({ ...prev, roomId: id, status: 'connected' }));
+      startHeartbeat(peer);
     });
 
     peer.on('connection', (conn) => {
@@ -198,6 +224,10 @@ export const usePeerChat = () => {
       conn.on('close', () => {
         connectionsRef.current = connectionsRef.current.filter(c => c !== conn);
       });
+      
+      conn.on('error', (err) => {
+        console.error('Connection error:', err);
+      });
     });
   };
 
@@ -208,32 +238,37 @@ export const usePeerChat = () => {
     setCurrentUser(user);
     setState(prev => ({ ...prev, status: 'connecting', error: null }));
 
+    if (peerRef.current) peerRef.current.destroy();
+
     const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
 
     setupCommonPeerEvents(peer);
 
-    // Timeout to detect if connection hangs
-    const connectionTimeout = setTimeout(() => {
+    // Extended timeout (20s)
+    if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+    connectionTimeoutRef.current = setTimeout(() => {
       if (state.status !== 'connected') {
         setState(prev => ({ 
           ...prev, 
           status: 'error', 
-          error: 'Connection timed out. Host might be offline.' 
+          error: 'Connection timed out. Host might be offline or behind a firewall.' 
         }));
       }
-    }, 10000); // 10 seconds timeout
+    }, 20000); 
 
     peer.on('open', () => {
+      // Once we have our own ID, connect to host
       const conn = peer.connect(roomId, {
         reliable: true
       });
       hostConnectionRef.current = conn;
 
       conn.on('open', () => {
-        clearTimeout(connectionTimeout);
+        if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
         conn.send({ type: 'handshake', payload: user });
+        startHeartbeat(peer);
       });
 
       conn.on('data', (data: any) => {
@@ -241,8 +276,7 @@ export const usePeerChat = () => {
       });
 
       conn.on('error', (err) => {
-        clearTimeout(connectionTimeout);
-        setState(prev => ({ ...prev, status: 'error', error: 'Could not connect to host.' }));
+        console.error('Host connection error:', err);
       });
       
       conn.on('close', () => {
@@ -257,12 +291,12 @@ export const usePeerChat = () => {
     if (data.type === 'handshake') {
       const newUser = data.payload as User;
       setState(prev => {
-        // Prevent duplicate users
         if (prev.users.find(u => u.id === newUser.id)) return prev;
-        
         const newUsers = [...prev.users, newUser];
+        // Broadcast new user list to EVERYONE
         const updatePayload: PeerData = { type: 'user_list_update', payload: newUsers };
         broadcast(updatePayload);
+        // Sync history ONLY to the new user
         senderConn.send({ type: 'history_sync', payload: prev.messages });
         return { ...prev, users: newUsers };
       });
@@ -281,7 +315,7 @@ export const usePeerChat = () => {
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
       addMessage(msg);
-      broadcast(data); // Re-broadcast
+      broadcast(data);
 
       if (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai')) {
          generateAIResponse(msg.content, state.messages).then(responseText => {
@@ -300,7 +334,6 @@ export const usePeerChat = () => {
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
-      // Re-broadcast so other guests see it
       broadcast(data);
     }
   };
@@ -310,22 +343,19 @@ export const usePeerChat = () => {
       updateUsers(data.payload);
     } else if (data.type === 'message') {
       addMessage(data.payload);
+    } else if (data.type === 'history_sync') {
+      setState(prev => ({ ...prev, messages: data.payload }));
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
     }
   };
 
-  // Cleanup
   useEffect(() => {
     return () => {
-      // Small delay to prevent destroying on hot-reload immediately during dev
-      if (peerRef.current) {
-        peerRef.current.destroy();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      if (peerRef.current) peerRef.current.destroy();
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
     };
   }, []);
 
