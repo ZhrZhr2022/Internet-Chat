@@ -13,6 +13,31 @@ interface ChatScreenProps {
   onLeave: () => void;
 }
 
+// Utility to compress image to prevent P2P data choke
+const compressImage = (base64: string, maxWidth = 800, quality = 0.7): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(base64); // Fallback if fail
+  });
+};
+
 export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const { state, currentUser, isAiThinking, sendMessage, setTyping, kickUser, toggleMuteUser } = chat;
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -28,6 +53,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasUnreadMention, setHasUnreadMention] = useState(false);
+  const prevMessagesLengthRef = useRef(0);
   
   // Mentions State
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
@@ -49,7 +75,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    const isBottom = scrollHeight - scrollTop - clientHeight < 100;
+    // Increased threshold to 150 to be more forgiving with images
+    const isBottom = scrollHeight - scrollTop - clientHeight < 150;
     setIsAtBottom(isBottom);
     if (isBottom) {
       setUnreadCount(0);
@@ -59,18 +86,25 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
   // Effect: Handle new messages
   useEffect(() => {
-    if (state.messages.length === 0) return;
+    // Only react if message count actually increased (avoids false positives on re-renders)
+    if (state.messages.length > prevMessagesLengthRef.current) {
+      const lastMsg = state.messages[state.messages.length - 1];
+      const isMention = currentUser && lastMsg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
 
-    const lastMsg = state.messages[state.messages.length - 1];
-    const isMention = currentUser && lastMsg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
-
-    if (isAtBottom || lastMsg.senderId === currentUser?.id) {
-      scrollToBottom();
-    } else {
-      setUnreadCount(prev => prev + 1);
-      if (isMention) setHasUnreadMention(true);
+      // If sent by me, force scroll. If I am at bottom, auto scroll.
+      if (lastMsg.senderId === currentUser?.id || isAtBottom) {
+        // Small timeout to allow render to finish (especially for images)
+        setTimeout(scrollToBottom, 50);
+      } else {
+        setUnreadCount(prev => prev + 1);
+        if (isMention) setHasUnreadMention(true);
+      }
     }
-  }, [state.messages, currentUser, isAtBottom]);
+    
+    // Update ref for next run
+    prevMessagesLengthRef.current = state.messages.length;
+    
+  }, [state.messages, currentUser]); // Removed isAtBottom from deps to prevent scroll jumping on scroll event
 
   // --- Search & Typing ---
 
@@ -128,27 +162,25 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   };
 
   // --- Paste Handler (Images) ---
-  const handlePaste = (e: React.ClipboardEvent) => {
+  const handlePaste = async (e: React.ClipboardEvent) => {
     if (currentUser?.isMuted) return;
     
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
-        e.preventDefault(); // Prevent text input of binary data
+        e.preventDefault(); 
         const blob = items[i].getAsFile();
         if (blob) {
-          if (blob.size > 2 * 1024 * 1024) {
-            alert("Pasted image is too large (max 2MB).");
-            return;
-          }
           const reader = new FileReader();
-          reader.onloadend = () => {
+          reader.onloadend = async () => {
             const base64 = reader.result as string;
-            sendMessage(base64, MessageType.IMAGE);
+            // Compress before sending
+            const compressed = await compressImage(base64);
+            sendMessage(compressed, MessageType.IMAGE);
           };
           reader.readAsDataURL(blob);
         }
-        return; // Handle only the first image
+        return; 
       }
     }
   };
@@ -173,14 +205,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     if (currentUser?.isMuted) return;
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        alert("File too large. Please send images under 2MB.");
-        return;
-      }
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const base64 = reader.result as string;
-        sendMessage(base64, MessageType.IMAGE);
+        // Compress before sending
+        const compressed = await compressImage(base64);
+        sendMessage(compressed, MessageType.IMAGE);
       };
       reader.readAsDataURL(file);
     }
@@ -370,7 +400,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         <div 
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth overscroll-contain"
+          className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth overscroll-contain overflow-anchor-auto"
         >
           {state.messages.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none p-4 text-center">
@@ -392,7 +422,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         </div>
 
         {/* Input Area */}
-        {/* Added pb-[env(safe-area-inset-bottom)] for iPhone home bar area */}
         <div className="p-2 md:p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20 pb-[env(safe-area-inset-bottom)]">
           
           {/* FLOATING AREA: Notifications & Typing Indicators */}

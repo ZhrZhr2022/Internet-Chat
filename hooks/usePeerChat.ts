@@ -47,10 +47,17 @@ export const usePeerChat = () => {
   const hostConnectionRef = useRef<DataConnection | null>(null); // Guest keeps track of host
   
   const messageIdsRef = useRef<Set<string>>(new Set());
+  // NEW: Keep track of messages in ref for sync access without closure staleness
+  const messagesRef = useRef<Message[]>([]);
   
   const heartbeatTimerRef = useRef<any>(null);
   const connectionTimeoutRef = useRef<any>(null);
   const retryCountRef = useRef(0);
+
+  // Sync state messages to ref
+  useEffect(() => {
+    messagesRef.current = state.messages;
+  }, [state.messages]);
 
   // --- Persistence Logic ---
   useEffect(() => {
@@ -82,16 +89,13 @@ export const usePeerChat = () => {
 
       const newStatus = document.hidden ? 'away' : 'online';
       
-      // Update local state temporarily? No, wait for server/host echo ideally, 
-      // but for responsiveness we can trigger it.
-      
       const payload: PeerData = {
         type: 'status_update',
         payload: { userId: currentUser.id, status: newStatus }
       };
 
       if (currentUser.isHost) {
-        handleStatusUpdate(currentUser.id, newStatus); // Host updates self locally
+        handleStatusUpdate(currentUser.id, newStatus); 
       } else {
         sendToHost(payload);
       }
@@ -133,10 +137,10 @@ export const usePeerChat = () => {
 
     if (conn) {
       conn.send({ type: 'kick_notification', payload: 'You have been kicked by the host.' });
-      setTimeout(() => conn.close(), 500); // Give time to receive message
+      setTimeout(() => conn.close(), 500); 
     }
     
-    // Fallback: manually trigger disconnect logic in case close event lags
+    // Fallback
     const targetUser = state.users.find(u => u.id === targetUserId);
     if (targetUser) handleUserDisconnect(targetUserId, targetUser.name);
 
@@ -147,7 +151,7 @@ export const usePeerChat = () => {
     
     setState(prev => {
       const updatedUsers = prev.users.map(u => 
-        u.id === targetUserId ? { ...u, isMuted: !u.isMuted } : u
+        u.id === targetUserId ? { ...u, isMuted: !u.isMuted } as User : u
       );
       // Broadcast new state
       broadcast({ type: 'user_list_update', payload: updatedUsers });
@@ -168,7 +172,7 @@ export const usePeerChat = () => {
   }, []);
 
   const setTyping = useCallback((isTyping: boolean) => {
-    if (!currentUser || currentUser.isMuted) return; // Prevent typing if muted
+    if (!currentUser || currentUser.isMuted) return; 
     const payload: PeerData = {
       type: 'typing_status',
       payload: { name: currentUser.name, isTyping }
@@ -179,7 +183,6 @@ export const usePeerChat = () => {
 
   const sendMessage = async (content: string, type: MessageType = MessageType.TEXT) => {
     if (!currentUser) return;
-    // Client-side mute check
     if (currentUser.isMuted) {
       alert("You have been muted by the host.");
       return;
@@ -200,9 +203,9 @@ export const usePeerChat = () => {
     if (currentUser.isHost) broadcast(payload);
     else sendToHost(payload);
 
-    if (currentUser.isHost && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
+    if (currentUser.isHost && type === MessageType.TEXT && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
       setIsAiThinking(true);
-      const currentMessages = [...state.messages, newMessage];
+      const currentMessages = [...messagesRef.current, newMessage]; // Use Ref for latest
       try {
         const aiResponseText = await generateAIResponse(content, currentMessages);
         const aiMessage: Message = {
@@ -232,7 +235,6 @@ export const usePeerChat = () => {
   };
 
   const createRoom = (username: string) => {
-    // Reuse ID if exists, or gen new one
     const userId = currentUser?.id || crypto.randomUUID();
     const user: User = { 
       id: userId, 
@@ -247,6 +249,7 @@ export const usePeerChat = () => {
     setCurrentUser(user);
     saveProfile(user);
     messageIdsRef.current.clear();
+    messagesRef.current = [];
     setState(prev => ({ ...prev, status: 'connecting', users: [user, aiUser], messages: [] }));
 
     if (peerRef.current) peerRef.current.destroy();
@@ -285,6 +288,7 @@ export const usePeerChat = () => {
     setCurrentUser(user);
     saveProfile(user);
     messageIdsRef.current.clear();
+    messagesRef.current = [];
     setState(prev => ({ ...prev, status: 'connecting', error: null, messages: [] }));
 
     if (peerRef.current) peerRef.current.destroy();
@@ -302,7 +306,7 @@ export const usePeerChat = () => {
 
       conn.on('open', () => {
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
-        retryCountRef.current = 0; // Reset retries
+        retryCountRef.current = 0; 
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
         conn.send({ type: 'handshake', payload: user });
         startHeartbeat(peer);
@@ -323,7 +327,6 @@ export const usePeerChat = () => {
     
     peer.on('error', (err: any) => {
       console.error('Peer error:', err);
-      // Retry for specific errors
       if (err.type === 'peer-unavailable' && retryCountRef.current < 3) {
         retryCountRef.current++;
         console.log(`Retrying connection... Attempt ${retryCountRef.current}`);
@@ -352,7 +355,7 @@ export const usePeerChat = () => {
 
   const handleStatusUpdate = (userId: string, status: 'online' | 'away') => {
     setState(prev => {
-        const newUsers = prev.users.map(u => u.id === userId ? { ...u, status } : u);
+        const newUsers = prev.users.map(u => u.id === userId ? { ...u, status } as User : u);
         broadcast({ type: 'user_list_update', payload: newUsers });
         return { ...prev, users: newUsers };
     });
@@ -366,18 +369,24 @@ export const usePeerChat = () => {
       senderConn.on('close', () => handleUserDisconnect(newUser.id, newUser.name));
 
       setState(prev => {
-        // Update if exists (reconnect) or add new
         const existingIndex = prev.users.findIndex(u => u.id === newUser.id);
         let newUsers: User[];
         if (existingIndex >= 0) {
             newUsers = [...prev.users];
-            newUsers[existingIndex] = { ...newUser, status: 'online' } as User; // Force online on reconnect
+            newUsers[existingIndex] = { ...newUser, status: 'online' } as User; 
         } else {
             newUsers = [...prev.users, { ...newUser, status: 'online' } as User];
         }
         
         broadcast({ type: 'user_list_update', payload: newUsers });
-        senderConn.send({ type: 'history_sync', payload: prev.messages });
+        
+        // Use Ref for latest messages to ensure we send full history including just added ones
+        setTimeout(() => {
+           if (senderConn.open) {
+             senderConn.send({ type: 'history_sync', payload: messagesRef.current });
+           }
+        }, 100);
+        
         return { ...prev, users: newUsers };
       });
 
@@ -394,16 +403,16 @@ export const usePeerChat = () => {
 
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
-      // Host Mute Check
       const sender = state.users.find(u => u.id === msg.senderId);
-      if (sender?.isMuted) return; // Drop message
+      if (sender?.isMuted) return; 
 
       addMessage(msg); 
+      // Important: Broadcast to everyone including the sender (sender ignores duplicate ID)
       broadcast(data);
 
-      if (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai')) {
+      if (msg.type === MessageType.TEXT && (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai'))) {
          setIsAiThinking(true);
-         const currentMessages = [...state.messages, msg];
+         const currentMessages = [...messagesRef.current, msg];
          try {
              const responseText = await generateAIResponse(msg.content, currentMessages);
              const aiMessage: Message = {
@@ -457,10 +466,7 @@ export const usePeerChat = () => {
 
   const handleGuestData = (data: PeerData) => {
     if (data.type === 'user_list_update') {
-      // Merge with current user to ensure we don't lose our own status locally if update lags
       updateUsers(data.payload);
-      
-      // Update current user Ref if permissions changed (mute)
       const myUser = (data.payload as User[]).find(u => u.id === currentUser?.id);
       if (myUser && currentUser) {
           if (myUser.isMuted !== currentUser.isMuted) {
@@ -472,10 +478,21 @@ export const usePeerChat = () => {
       addMessage(data.payload);
     } else if (data.type === 'history_sync') {
       const history = data.payload as Message[];
-      history.forEach(msg => {
-          if(!messageIdsRef.current.has(msg.id)) messageIdsRef.current.add(msg.id);
+      const historyIds = new Set(history.map(m => m.id));
+
+      setState(prev => {
+         // Merge logic: Keep messages that we received locally which are NOT in history yet
+         // This protects against the case where a "Joined" message arrives before history sync
+         const localMessages = prev.messages.filter(m => !historyIds.has(m.id));
+         const merged = [...history, ...localMessages].sort((a,b) => a.timestamp - b.timestamp);
+         
+         // Update ID tracker
+         merged.forEach(m => messageIdsRef.current.add(m.id));
+         messagesRef.current = merged; 
+         
+         return { ...prev, messages: merged };
       });
-      setState(prev => ({ ...prev, messages: history }));
+      
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
