@@ -1,4 +1,4 @@
-import { Message } from "../types";
+import { Message, MessageType } from "../types";
 
 const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
 // WARNING: Hardcoding API keys in frontend code is insecure. 
@@ -8,7 +8,7 @@ const DEEPSEEK_API_KEY = "sk-0438341f9a094b9798be75f4ceaa37bd";
 const SYSTEM_INSTRUCTION = `You are Nexus AI, a helpful and witty assistant inside a group chat. 
 Your goal is to help users, answer questions, and sometimes make jokes. 
 Keep your responses relatively concise (under 150 words) unless asked for a detailed explanation. 
-You can see the recent chat history to understand context.
+You are part of the conversation.
 Format your response in Markdown.`;
 
 export const generateAIResponse = async (
@@ -23,18 +23,41 @@ export const generateAIResponse = async (
   }
 
   try {
-    // Convert last few messages to context
-    const recentContext = history
-      .slice(-10)
-      .map(m => `${m.senderName}: ${m.type === 'IMAGE' ? '[Image]' : m.content}`)
-      .join('\n');
+    // Transform history into OpenAI compatible format
+    // Take last 15 messages to maintain context without exceeding limits
+    const conversationHistory = history
+      .slice(-15)
+      .map(m => {
+        const role = m.type === MessageType.AI ? "assistant" : "user";
+        // If it's a user message, include their name for context
+        const content = m.type === MessageType.AI 
+          ? m.content 
+          : `${m.senderName}: ${m.type === MessageType.IMAGE ? '[Image Shared]' : m.content}`;
+        
+        return { role, content };
+      });
 
-    const prompt = `
-Context of the chat so far:
-${recentContext}
+    // Add current message
+    // Note: We don't add the current message to history array yet in the UI when this is called, 
+    // but the caller passes the message string.
+    // However, usually the UI adds the user message FIRST, then calls this. 
+    // If 'history' already contains 'currentMessage', we don't need to append it again.
+    // Based on usePeerChat logic, the message is added to state before calling this.
+    // So currentMessage is likely already the last item in history? 
+    // Actually, usePeerChat passes `state.messages`. 
+    // Let's ensure we don't duplicate the last prompt if it's already in history.
+    
+    const messagesPayload = [
+      { role: "system", content: SYSTEM_INSTRUCTION },
+      ...conversationHistory
+    ];
 
-Current User Message: ${currentMessage}
-`;
+    // Double check: if the very last message in history is NOT the current prompt, we append it.
+    // (In case the state update hasn't propagated to the history prop passed here yet)
+    const lastMsg = history[history.length - 1];
+    if (!lastMsg || lastMsg.content !== currentMessage) {
+        messagesPayload.push({ role: "user", content: currentMessage });
+    }
 
     const response = await fetch(DEEPSEEK_API_URL, {
       method: "POST",
@@ -44,10 +67,7 @@ Current User Message: ${currentMessage}
       },
       body: JSON.stringify({
         model: "deepseek-chat",
-        messages: [
-          { role: "system", content: SYSTEM_INSTRUCTION },
-          { role: "user", content: prompt }
-        ],
+        messages: messagesPayload,
         stream: false,
         temperature: 1.3
       })

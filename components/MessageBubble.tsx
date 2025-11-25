@@ -1,15 +1,16 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Message, MessageType } from '../types';
-import { Bot, User as UserIcon } from 'lucide-react';
+import { Bot } from 'lucide-react';
 
 interface MessageBubbleProps {
   message: Message;
   isSelf: boolean;
+  isMentioned?: boolean;
   onImageClick?: (src: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, onImageClick }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, isMentioned, onImageClick }) => {
   const timeString = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   if (message.type === MessageType.SYSTEM) {
@@ -46,12 +47,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, o
             <span className="text-[10px] text-slate-500">{timeString}</span>
           </div>
 
-          <div className={`px-4 py-2.5 rounded-2xl shadow-sm ${
+          <div className={`px-4 py-2.5 rounded-2xl shadow-sm relative transition-all duration-300 ${
+            isMentioned ? 'ring-2 ring-yellow-400/70 shadow-[0_0_15px_rgba(250,204,21,0.2)]' : ''
+          } ${
             isSelf 
               ? 'bg-indigo-600 text-white rounded-tr-none' 
               : message.type === MessageType.AI 
-                ? 'bg-slate-800/80 border border-emerald-500/30 text-emerald-50 rounded-tl-none'
-                : 'bg-slate-800 text-slate-100 rounded-tl-none'
+                ? 'bg-slate-800/90 border border-emerald-500/30 text-emerald-50 rounded-tl-none'
+                : isMentioned 
+                  ? 'bg-slate-800 text-slate-100 rounded-tl-none border border-yellow-500/30 bg-yellow-500/5' 
+                  : 'bg-slate-800 text-slate-100 rounded-tl-none'
           }`}>
             {message.type === MessageType.IMAGE ? (
               <img 

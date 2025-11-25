@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ArrowDown, Sparkles } from 'lucide-react';
 import { usePeerChat } from '../hooks/usePeerChat';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
@@ -13,30 +13,70 @@ interface ChatScreenProps {
 }
 
 export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
-  const { state, currentUser, sendMessage, setTyping } = chat;
+  const { state, currentUser, isAiThinking, sendMessage, setTyping } = chat;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  
   const [inputValue, setInputValue] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   
+  // Scroll & Notification State
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [hasUnreadMention, setHasUnreadMention] = useState(false);
+  
   // Mentions State
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Typing Logic Refs
   const typingTimeoutRef = useRef<any>(null);
   const lastTypingSentRef = useRef<number>(0);
 
-  // Auto scroll to bottom
-  useEffect(() => {
+  // --- Scroll Logic ---
+  
+  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [state.messages, state.typingUsers]);
+    setUnreadCount(0);
+    setHasUnreadMention(false);
+  };
 
-  // Handle Mention Search
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    // Check if user is near bottom (within 100px)
+    const isBottom = scrollHeight - scrollTop - clientHeight < 100;
+    setIsAtBottom(isBottom);
+    if (isBottom) {
+      setUnreadCount(0);
+      setHasUnreadMention(false);
+    }
+  };
+
+  // Effect: Handle new messages
+  useEffect(() => {
+    if (state.messages.length === 0) return;
+
+    const lastMsg = state.messages[state.messages.length - 1];
+    
+    // Check if last message is a mention for me
+    const isMention = currentUser && lastMsg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
+
+    if (isAtBottom || lastMsg.senderId === currentUser?.id) {
+      // If at bottom OR I sent the message, auto scroll
+      scrollToBottom();
+    } else {
+      // Otherwise, increment unread
+      setUnreadCount(prev => prev + 1);
+      if (isMention) setHasUnreadMention(true);
+    }
+  }, [state.messages, currentUser, isAtBottom]); // removed state.messages.length dependency to rely on array ref change
+
+  // --- Search & Typing ---
+
   useEffect(() => {
     if (mentionSearch === null) {
       setFilteredUsers([]);
@@ -63,7 +103,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     setShowEmoji(false);
     setMentionSearch(null);
     
-    // Clear typing status immediately on send
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     setTyping(false);
     lastTypingSentRef.current = 0;
@@ -73,32 +112,23 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     const value = e.target.value;
     setInputValue(value);
     
-    // Mention Logic: Check if the last word starts with @
     const words = value.split(' ');
     const lastWord = words[words.length - 1];
     
     if (lastWord && lastWord.startsWith('@')) {
-      setMentionSearch(lastWord.substring(1)); // Search term without @
+      setMentionSearch(lastWord.substring(1));
     } else {
       setMentionSearch(null);
     }
 
-    // Improved Typing Indicator Logic (Throttled)
     const now = Date.now();
-    
-    // 1. If not currently marked as typing, or it's been > 1.5s since last "I'm typing" packet
-    //    send the packet again. This ensures validity even if packet loss occurs.
     if (now - lastTypingSentRef.current > 1500) {
       setTyping(true);
       lastTypingSentRef.current = now;
     }
     
-    // 2. Clear existing timeout to stop "I stopped typing"
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     
-    // 3. Set new timeout. If no input for 2s, send "false".
     typingTimeoutRef.current = setTimeout(() => {
       setTyping(false);
       lastTypingSentRef.current = 0;
@@ -108,7 +138,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
   const handleMentionSelect = (name: string) => {
     const words = inputValue.split(' ');
-    words.pop(); // Remove partial
+    words.pop();
     const newText = [...words, `@${name} `].join(' ');
     setInputValue(newText);
     setMentionSearch(null);
@@ -119,7 +149,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Limit file size to 2MB to prevent connection clogging
       if (file.size > 2 * 1024 * 1024) {
         alert("File too large. Please send images under 2MB.");
         return;
@@ -145,6 +174,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   };
 
   const activeTypers = state.typingUsers.filter(name => name !== currentUser?.name);
+
+  // Helper to check if a message mentions the current user
+  const isMessageMentioningMe = (msg: any) => {
+    if (!currentUser) return false;
+    return msg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
+  };
 
   return (
     <div className="flex h-[100dvh] bg-[#0f172a] overflow-hidden">
@@ -281,7 +316,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         </header>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth overscroll-contain">
+        <div 
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth overscroll-contain"
+        >
           {state.messages.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none p-4 text-center">
                <MessageSquare size={48} className="mb-2" />
@@ -294,6 +333,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               key={msg.id} 
               message={msg} 
               isSelf={msg.senderId === currentUser?.id} 
+              isMentioned={isMessageMentioningMe(msg)}
               onImageClick={(src) => setSelectedImage(src)}
             />
           ))}
@@ -303,17 +343,51 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         {/* Input Area */}
         <div className="p-3 md:p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20 safe-area-bottom">
           
-          {/* Typing Indicator */}
-          {activeTypers.length > 0 && (
-            <div className="absolute top-[-24px] left-6 text-[10px] md:text-xs text-indigo-300 animate-pulse flex items-center gap-1 bg-slate-900/80 px-2 py-1 rounded-t-lg">
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></span>
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
-              <span className="ml-1 font-medium truncate max-w-[200px]">
-                {activeTypers.join(', ')} typing...
-              </span>
-            </div>
-          )}
+          {/* FLOATING AREA: Notifications & Typing Indicators */}
+          <div className="absolute bottom-full left-0 w-full px-4 pb-2 pointer-events-none flex flex-col items-center gap-2">
+            
+            {/* 1. New Message / Scroll Button */}
+            {!isAtBottom && unreadCount > 0 && (
+              <button 
+                onClick={scrollToBottom}
+                className={`pointer-events-auto shadow-xl px-4 py-2 rounded-full text-sm font-medium transition-all animate-slide-up flex items-center gap-2 ${
+                  hasUnreadMention 
+                    ? 'bg-yellow-500 text-slate-900 hover:bg-yellow-400' 
+                    : 'bg-indigo-600 text-white hover:bg-indigo-500'
+                }`}
+              >
+                <ArrowDown size={16} />
+                {hasUnreadMention ? 'You were mentioned!' : `${unreadCount} New Messages`}
+              </button>
+            )}
+
+            {/* 2. Typing Indicators (Users & AI) */}
+            {(activeTypers.length > 0 || isAiThinking) && (
+               <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up">
+                 {/* AI Thinking Status */}
+                 {isAiThinking && (
+                   <div className="flex items-center gap-2 text-emerald-400 border-r border-white/10 pr-3 mr-1">
+                      <Sparkles size={14} className="animate-pulse" />
+                      <span className="text-xs font-medium">Nexus AI is thinking...</span>
+                   </div>
+                 )}
+                 
+                 {/* User Typing Status */}
+                 {activeTypers.length > 0 && (
+                   <div className="flex items-center gap-2 text-indigo-300">
+                     <div className="flex gap-1">
+                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></span>
+                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
+                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
+                     </div>
+                     <span className="text-xs max-w-[150px] truncate">
+                       {activeTypers.join(', ')} typing...
+                     </span>
+                   </div>
+                 )}
+               </div>
+            )}
+          </div>
 
           {/* Mention Popup */}
           {mentionSearch !== null && filteredUsers.length > 0 && (

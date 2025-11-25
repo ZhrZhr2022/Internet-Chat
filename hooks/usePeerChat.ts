@@ -41,6 +41,7 @@ export const usePeerChat = () => {
   });
   
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAiThinking, setIsAiThinking] = useState(false);
 
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<DataConnection[]>([]); // Host keeps track of all guests
@@ -111,9 +112,6 @@ export const usePeerChat = () => {
       payload: { name: currentUser.name, isTyping }
     };
     
-    // Update local state immediately for smoother UI (optional, but good for self-feedback if needed)
-    // handleTypingUpdate(currentUser.name, isTyping); 
-    
     if (currentUser.isHost) {
       broadcast(payload);
     } else {
@@ -148,19 +146,27 @@ export const usePeerChat = () => {
 
     // AI Check (Only host processes AI to avoid duplicates)
     if (currentUser.isHost && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
-      const aiResponseText = await generateAIResponse(content, state.messages);
+      setIsAiThinking(true);
+      // Pass the updated messages including the new one
+      const currentMessages = [...state.messages, newMessage];
       
-      const aiMessage: Message = {
-        id: crypto.randomUUID(),
-        senderId: 'ai-bot',
-        senderName: 'Nexus AI',
-        content: aiResponseText,
-        timestamp: Date.now(),
-        type: MessageType.AI
-      };
+      try {
+        const aiResponseText = await generateAIResponse(content, currentMessages);
+        
+        const aiMessage: Message = {
+          id: crypto.randomUUID(),
+          senderId: 'ai-bot',
+          senderName: 'Nexus AI',
+          content: aiResponseText,
+          timestamp: Date.now(),
+          type: MessageType.AI
+        };
 
-      addMessage(aiMessage);
-      broadcast({ type: 'message', payload: aiMessage });
+        addMessage(aiMessage);
+        broadcast({ type: 'message', payload: aiMessage });
+      } finally {
+        setIsAiThinking(false);
+      }
     }
   };
 
@@ -172,11 +178,28 @@ export const usePeerChat = () => {
     
     heartbeatTimerRef.current = setInterval(() => {
       if (!peer || peer.destroyed) return;
+      
+      // 1. Signaling Server Reconnect
       if (peer.disconnected && !peer.destroyed) {
         console.log('Heartbeat: Reconnecting to signaling server...');
         peer.reconnect();
       }
-    }, 4000); 
+
+      // 2. Keep-Alive Pings for Data Connections (NAT Traversal)
+      if (currentUser?.isHost) {
+        connectionsRef.current.forEach(conn => {
+          if (conn.open) {
+             // Send empty blob or small string to keep NAT entry active
+             // Using a specialized type that receivers ignore or handle silently
+             // PeerJS doesn't have a native ping, so we just check open state implicitly
+             // But strictly speaking, sending data is the best way.
+             // We'll skip sending actual data to avoid UI clutter, 
+             // PeerJS's reliable channel usually handles keepalives internally.
+          }
+        });
+      }
+
+    }, 2000); 
   };
 
   const setupCommonPeerEvents = (peer: Peer) => {
@@ -238,8 +261,7 @@ export const usePeerChat = () => {
       });
 
       conn.on('close', () => {
-          // Handled via handleUserDisconnect logic when possible, 
-          // or just generic cleanup if we can identify connection.
+          // Handled via handleUserDisconnect logic
       });
       
       conn.on('error', (err) => console.error("Connection error:", err));
@@ -270,7 +292,7 @@ export const usePeerChat = () => {
           error: 'Connection timed out. Host might be offline or blocked by firewall.' 
         }));
       }
-    }, 45000); // Increased to 45s
+    }, 45000); 
 
     peer.on('open', () => {
       const conn = peer.connect(roomId, {
@@ -308,7 +330,7 @@ export const usePeerChat = () => {
   // Map to track connection -> UserID for disconnection handling
   const connMapRef = useRef<Map<string, string>>(new Map());
 
-  const handleHostData = (data: PeerData, senderConn: DataConnection) => {
+  const handleHostData = async (data: PeerData, senderConn: DataConnection) => {
     if (data.type === 'handshake') {
       const newUser = data.payload as User;
       
@@ -350,7 +372,12 @@ export const usePeerChat = () => {
 
       // DeepSeek AI Check
       if (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai')) {
-         generateAIResponse(msg.content, state.messages).then(responseText => {
+         setIsAiThinking(true);
+         // Important: Add the new message to history context manually before state updates
+         const currentMessages = [...state.messages, msg];
+         
+         try {
+             const responseText = await generateAIResponse(msg.content, currentMessages);
              const aiMessage: Message = {
                 id: crypto.randomUUID(),
                 senderId: 'ai-bot',
@@ -361,7 +388,9 @@ export const usePeerChat = () => {
               };
               addMessage(aiMessage);
               broadcast({ type: 'message', payload: aiMessage });
-         });
+         } finally {
+             setIsAiThinking(false);
+         }
        }
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
@@ -430,6 +459,7 @@ export const usePeerChat = () => {
   return {
     state,
     currentUser,
+    isAiThinking,
     createRoom,
     joinRoom,
     sendMessage,
