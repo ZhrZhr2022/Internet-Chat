@@ -6,9 +6,10 @@ import { Bot, User as UserIcon } from 'lucide-react';
 interface MessageBubbleProps {
   message: Message;
   isSelf: boolean;
+  onImageClick?: (src: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, onImageClick }) => {
   const timeString = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   if (message.type === MessageType.SYSTEM) {
@@ -56,7 +57,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf })
                 src={message.content} 
                 alt="Shared attachment" 
                 className="max-w-full rounded-lg max-h-60 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                onClick={() => window.open(message.content, '_blank')}
+                onClick={() => onImageClick && onImageClick(message.content)}
               />
             ) : (
               <div className="prose prose-invert prose-sm max-w-none break-words leading-relaxed">

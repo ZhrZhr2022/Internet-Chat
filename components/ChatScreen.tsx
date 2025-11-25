@@ -1,11 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ZoomIn } from 'lucide-react';
 import { usePeerChat } from '../hooks/usePeerChat';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
-import { MessageType } from '../types';
+import { MessageType, User } from '../types';
 
 interface ChatScreenProps {
   chat: ReturnType<typeof usePeerChat>;
@@ -19,13 +19,38 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  
+  // Mentions State
+  const [mentionSearch, setMentionSearch] = useState<string | null>(null);
+  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
 
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [state.messages, state.typingUsers]); // Scroll when typing status changes too
+  }, [state.messages, state.typingUsers]);
+
+  // Handle Mention Search
+  useEffect(() => {
+    if (mentionSearch === null) {
+      setFilteredUsers([]);
+      return;
+    }
+    const search = mentionSearch.toLowerCase();
+    const matches = state.users.filter(u => 
+      u.name.toLowerCase().includes(search) && u.id !== currentUser?.id
+    );
+    // Always add AI
+    if ('nexus ai'.includes(search)) {
+      // Fake AI user for selection
+       const aiUser = { id: 'ai', name: 'Nexus AI', color: '#10b981', isHost: false } as User;
+       matches.push(aiUser);
+    }
+    setFilteredUsers(matches);
+  }, [mentionSearch, state.users, currentUser]);
 
   const handleSendMessage = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -33,6 +58,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     sendMessage(inputValue.trim());
     setInputValue('');
     setShowEmoji(false);
+    setMentionSearch(null);
     
     // Clear typing status immediately on send
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -40,8 +66,17 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputValue(e.target.value);
+    const value = e.target.value;
+    setInputValue(value);
     
+    // Mention Logic: Check if the last word starts with @
+    const lastWord = value.split(' ').pop();
+    if (lastWord && lastWord.startsWith('@')) {
+      setMentionSearch(lastWord.substring(1)); // Search term without @
+    } else {
+      setMentionSearch(null);
+    }
+
     // Typing indicator logic
     if (!typingTimeoutRef.current) {
       setTyping(true);
@@ -56,6 +91,18 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       setTyping(false);
       typingTimeoutRef.current = null;
     }, 2000);
+  };
+
+  const handleMentionSelect = (name: string) => {
+    // Replace the last word (the @part) with the full mention
+    const words = inputValue.split(' ');
+    words.pop(); // Remove partial
+    const newText = [...words, `@${name} `].join(' ');
+    setInputValue(newText);
+    setMentionSearch(null);
+    // Focus input back
+    const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
+    if(inputEl) inputEl.focus();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,8 +132,25 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const activeTypers = state.typingUsers.filter(name => name !== currentUser?.name);
 
   return (
-    <div className="flex h-screen bg-[#0f172a] overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#0f172a] overflow-hidden">
       
+      {/* Lightbox Overlay */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setSelectedImage(null)}
+        >
+          <button className="absolute top-4 right-4 text-white/70 hover:text-white p-2">
+            <X size={32} />
+          </button>
+          <img 
+            src={selectedImage} 
+            alt="Full screen" 
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+          />
+        </div>
+      )}
+
       {/* Mobile Sidebar Overlay */}
       {showSidebar && (
         <div 
@@ -181,9 +245,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col relative w-full">
+      <div className="flex-1 flex flex-col relative w-full h-full">
         {/* Header */}
-        <header className="h-16 border-b border-white/5 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-30">
+        <header className="h-16 shrink-0 border-b border-white/5 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <button 
               className="md:hidden p-2 text-slate-300 hover:bg-white/5 rounded-lg"
@@ -218,7 +282,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         </header>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 relative">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth">
           {state.messages.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none">
                <MessageSquare size={48} className="mb-2" />
@@ -236,13 +300,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               key={msg.id} 
               message={msg} 
               isSelf={msg.senderId === currentUser?.id} 
+              onImageClick={(src) => setSelectedImage(src)}
             />
           ))}
           <div ref={messagesEndRef} />
         </div>
 
         {/* Input Area */}
-        <div className="p-4 bg-slate-900 border-t border-white/5 relative">
+        <div className="p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20">
           
           {/* Typing Indicator */}
           {activeTypers.length > 0 && (
@@ -254,6 +319,29 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 {activeTypers.join(', ')} {activeTypers.length > 1 ? 'are' : 'is'} typing...
               </span>
             </div>
+          )}
+
+          {/* Mention Popup */}
+          {mentionSearch !== null && filteredUsers.length > 0 && (
+             <div className="absolute bottom-20 left-4 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden min-w-[200px] z-50 animate-slide-up">
+                <div className="px-3 py-2 bg-slate-900/50 border-b border-slate-700 text-xs text-slate-400 font-semibold">
+                  Mention user
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                   {filteredUsers.map(u => (
+                     <button
+                       key={u.id}
+                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-600/20 text-left transition-colors"
+                       onClick={() => handleMentionSelect(u.name)}
+                     >
+                       <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm" style={{ backgroundColor: u.color || '#10b981' }}>
+                         {u.name.substring(0,2).toUpperCase()}
+                       </div>
+                       <span className="text-sm text-slate-200 font-medium">{u.name}</span>
+                     </button>
+                   ))}
+                </div>
+             </div>
           )}
 
           <div className="max-w-4xl mx-auto flex items-end gap-2 bg-slate-800/50 p-2 rounded-2xl border border-white/10 relative">
@@ -296,8 +384,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 type="text"
                 value={inputValue}
                 onChange={handleInputChange}
-                placeholder="Type a message or @AI..."
+                placeholder="Type a message or @..."
                 className="w-full bg-transparent text-white placeholder-slate-500 focus:outline-none py-3 px-2"
+                enterKeyHint="send"
               />
               <Button 
                 type="submit" 

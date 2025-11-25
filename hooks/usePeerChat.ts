@@ -48,11 +48,18 @@ export const usePeerChat = () => {
 
   // --- Actions ---
 
+  // Fix: De-duplicate messages to prevent double rendering
   const addMessage = useCallback((msg: Message) => {
-    setState(prev => ({
-      ...prev,
-      messages: [...prev.messages, msg]
-    }));
+    setState(prev => {
+      // If message ID already exists, do not add it again
+      if (prev.messages.some(m => m.id === msg.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        messages: [...prev.messages, msg]
+      };
+    });
   }, []);
 
   const updateUsers = useCallback((users: User[]) => {
@@ -113,15 +120,19 @@ export const usePeerChat = () => {
       type
     };
 
+    // Add locally first
     addMessage(newMessage);
 
     const payload: PeerData = { type: 'message', payload: newMessage };
+    
+    // Distribute
     if (currentUser.isHost) {
       broadcast(payload);
     } else {
       sendToHost(payload);
     }
 
+    // AI Check (Only host processes AI to avoid duplicates)
     if (currentUser.isHost && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
       const aiResponseText = await generateAIResponse(content, state.messages);
       
@@ -280,7 +291,11 @@ export const usePeerChat = () => {
       });
       
       conn.on('close', () => {
-        setState(prev => ({ ...prev, status: 'error', error: 'Host disconnected.' }));
+        setState(prev => ({ 
+          ...prev, 
+          status: 'error', 
+          error: 'The Room Host has left. The session is closed.' 
+        }));
       });
     });
   };
@@ -314,8 +329,8 @@ export const usePeerChat = () => {
 
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
-      addMessage(msg);
-      broadcast(data);
+      addMessage(msg); // Add locally (Host)
+      broadcast(data); // Send to everyone else
 
       if (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai')) {
          generateAIResponse(msg.content, state.messages).then(responseText => {
