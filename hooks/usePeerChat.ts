@@ -9,6 +9,20 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
+// PeerJS Configuration with explicit STUN servers for better connectivity
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+    ]
+  },
+  debug: 1 // Errors only
+};
+
 export const usePeerChat = () => {
   const [state, setState] = useState<ChatState>({
     users: [],
@@ -24,6 +38,7 @@ export const usePeerChat = () => {
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<DataConnection[]>([]);
   const hostConnectionRef = useRef<DataConnection | null>(null); // For guests
+  const reconnectTimeoutRef = useRef<any>(null);
 
   // --- Actions ---
 
@@ -125,6 +140,37 @@ export const usePeerChat = () => {
 
   // --- Connection Logic ---
 
+  const setupCommonPeerEvents = (peer: Peer) => {
+    // Handle disconnection from signaling server (not necessarily from peers)
+    peer.on('disconnected', () => {
+      console.warn('Disconnected from signaling server. Attempting reconnect...');
+      // PeerJS specific: IDs remain valid if we reconnect
+      if (!peer.destroyed) {
+        peer.reconnect();
+      }
+    });
+
+    peer.on('close', () => {
+      console.error('Peer connection closed completely.');
+      setState(prev => ({ ...prev, status: 'error', error: 'Connection closed.' }));
+    });
+
+    peer.on('error', (err: any) => {
+      console.error('Peer error:', err);
+      let errorMessage = 'An error occurred.';
+      
+      if (err.type === 'peer-unavailable') {
+        errorMessage = 'Room not found or Host is offline.';
+      } else if (err.type === 'unavailable-id') {
+        errorMessage = 'ID collision. Please try again.';
+      } else if (err.type === 'network') {
+        errorMessage = 'Network error. check your connection.';
+      }
+
+      setState(prev => ({ ...prev, status: 'error', error: errorMessage }));
+    });
+  };
+
   const createRoom = (username: string) => {
     const userId = crypto.randomUUID();
     const user: User = { id: userId, name: username, color: getRandomColor(), isHost: true };
@@ -132,8 +178,10 @@ export const usePeerChat = () => {
     setCurrentUser(user);
     setState(prev => ({ ...prev, status: 'connecting', users: [user] }));
 
-    const peer = new Peer();
+    const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
+
+    setupCommonPeerEvents(peer);
 
     peer.on('open', (id) => {
       setState(prev => ({ ...prev, roomId: id, status: 'connected' }));
@@ -151,11 +199,6 @@ export const usePeerChat = () => {
         connectionsRef.current = connectionsRef.current.filter(c => c !== conn);
       });
     });
-
-    peer.on('error', (err) => {
-      console.error(err);
-      setState(prev => ({ ...prev, status: 'error', error: 'Connection failed.' }));
-    });
   };
 
   const joinRoom = (roomId: string, username: string) => {
@@ -163,16 +206,32 @@ export const usePeerChat = () => {
     const user: User = { id: userId, name: username, color: getRandomColor(), isHost: false };
     
     setCurrentUser(user);
-    setState(prev => ({ ...prev, status: 'connecting' }));
+    setState(prev => ({ ...prev, status: 'connecting', error: null }));
 
-    const peer = new Peer();
+    const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
 
+    setupCommonPeerEvents(peer);
+
+    // Timeout to detect if connection hangs
+    const connectionTimeout = setTimeout(() => {
+      if (state.status !== 'connected') {
+        setState(prev => ({ 
+          ...prev, 
+          status: 'error', 
+          error: 'Connection timed out. Host might be offline.' 
+        }));
+      }
+    }, 10000); // 10 seconds timeout
+
     peer.on('open', () => {
-      const conn = peer.connect(roomId);
+      const conn = peer.connect(roomId, {
+        reliable: true
+      });
       hostConnectionRef.current = conn;
 
       conn.on('open', () => {
+        clearTimeout(connectionTimeout);
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
         conn.send({ type: 'handshake', payload: user });
       });
@@ -182,16 +241,13 @@ export const usePeerChat = () => {
       });
 
       conn.on('error', (err) => {
+        clearTimeout(connectionTimeout);
         setState(prev => ({ ...prev, status: 'error', error: 'Could not connect to host.' }));
       });
       
       conn.on('close', () => {
         setState(prev => ({ ...prev, status: 'error', error: 'Host disconnected.' }));
       });
-    });
-    
-    peer.on('error', () => {
-        setState(prev => ({ ...prev, status: 'error', error: 'Failed to initialize peer.' }));
     });
   };
 
@@ -201,6 +257,9 @@ export const usePeerChat = () => {
     if (data.type === 'handshake') {
       const newUser = data.payload as User;
       setState(prev => {
+        // Prevent duplicate users
+        if (prev.users.find(u => u.id === newUser.id)) return prev;
+        
         const newUsers = [...prev.users, newUser];
         const updatePayload: PeerData = { type: 'user_list_update', payload: newUsers };
         broadcast(updatePayload);
@@ -260,7 +319,13 @@ export const usePeerChat = () => {
   // Cleanup
   useEffect(() => {
     return () => {
-      peerRef.current?.destroy();
+      // Small delay to prevent destroying on hot-reload immediately during dev
+      if (peerRef.current) {
+        peerRef.current.destroy();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
     };
   }, []);
 
