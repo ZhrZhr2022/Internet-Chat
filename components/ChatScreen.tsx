@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon } from 'lucide-react';
 import { usePeerChat } from '../hooks/usePeerChat';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
@@ -131,9 +131,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
             
             {/* LAN Tip */}
             <div className="text-[10px] text-slate-500 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20">
-               <span className="text-indigo-400 font-bold block mb-1">📢 For Local WiFi:</span> 
-               If your friends are on the same WiFi, the link might not work if it says 'localhost'. 
-               You must replace 'localhost' with your computer's IP address (e.g. 192.168.1.5).
+               <span className="text-indigo-400 font-bold block mb-1">📢 Connection Tip:</span> 
+               Send the link to friends. They can join from any device.
             </div>
           </div>
 
@@ -193,27 +192,43 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               <Menu size={24} />
             </button>
             <div>
-              <h3 className="font-bold text-white">Nexus Chat</h3>
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-xs text-slate-400">{state.status === 'connected' ? 'Live' : 'Connecting...'}</span>
-              </div>
+              <h3 className="font-bold text-white flex items-center gap-2">
+                Nexus Chat
+                <span className={`w-2 h-2 rounded-full ${state.status === 'connected' ? 'bg-emerald-500' : 'bg-yellow-500'} animate-pulse`} />
+              </h3>
             </div>
           </div>
           
-          <div className="hidden sm:block">
-            <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-white/5">
-              Tip: Mention <span className="text-indigo-400">@AI</span> for help
-            </span>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              className={`hidden sm:flex items-center gap-2 border-indigo-500/30 ${copied ? 'bg-indigo-500/20 text-indigo-300' : ''}`}
+              onClick={copyRoomLink}
+            >
+              {copied ? <Check size={16} /> : <Share2 size={16} />}
+              {copied ? 'Copied!' : 'Share Link'}
+            </Button>
+            
+            {/* Mobile Share Icon */}
+            <button onClick={copyRoomLink} className="sm:hidden p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-full">
+               {copied ? <Check size={20} /> : <LinkIcon size={20} />}
+            </button>
           </div>
         </header>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 relative">
           {state.messages.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50">
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none">
                <MessageSquare size={48} className="mb-2" />
                <p>No messages yet. Say hello!</p>
+               <div className="mt-4 flex flex-col items-center gap-2 text-sm">
+                 <p>Waiting for friends?</p>
+                 <Button variant="secondary" size="sm" onClick={copyRoomLink}>
+                    <Copy size={14} className="mr-2"/> Copy Invite Link
+                 </Button>
+               </div>
             </div>
           )}
           {state.messages.map((msg) => (
