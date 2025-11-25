@@ -127,6 +127,32 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     }, 2000);
   };
 
+  // --- Paste Handler (Images) ---
+  const handlePaste = (e: React.ClipboardEvent) => {
+    if (currentUser?.isMuted) return;
+    
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        e.preventDefault(); // Prevent text input of binary data
+        const blob = items[i].getAsFile();
+        if (blob) {
+          if (blob.size > 2 * 1024 * 1024) {
+            alert("Pasted image is too large (max 2MB).");
+            return;
+          }
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64 = reader.result as string;
+            sendMessage(base64, MessageType.IMAGE);
+          };
+          reader.readAsDataURL(blob);
+        }
+        return; // Handle only the first image
+      }
+    }
+  };
+
   const handleMentionSelect = (name: string) => {
     const words = inputValue.split(' ');
     words.pop();
@@ -201,14 +227,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       {/* Mobile Sidebar Overlay */}
       {showSidebar && (
         <div 
-          className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm"
+          className="fixed inset-0 bg-black/60 z-[60] md:hidden backdrop-blur-sm transition-opacity"
           onClick={() => setShowSidebar(false)}
         />
       )}
 
       {/* Sidebar */}
       <div className={`
-        fixed md:relative inset-y-0 left-0 w-80 bg-slate-900 border-r border-white/10 z-50 transform transition-transform duration-300 ease-in-out flex flex-col h-full
+        fixed md:relative inset-y-0 left-0 w-80 bg-slate-900 border-r border-white/10 z-[70] transform transition-transform duration-300 ease-in-out flex flex-col h-full shadow-2xl md:shadow-none
         ${showSidebar ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
         <div className="p-6 border-b border-white/5 flex items-center justify-between">
@@ -216,7 +242,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
             <Users size={20} className="text-indigo-400" />
             Room Info
           </h2>
-          <button onClick={() => setShowSidebar(false)} className="md:hidden text-slate-400">
+          <button onClick={() => setShowSidebar(false)} className="md:hidden text-slate-400 p-2 hover:bg-white/10 rounded-lg">
             <X size={24} />
           </button>
         </div>
@@ -296,7 +322,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
           </div>
         </div>
 
-        <div className="p-4 border-t border-white/5">
+        <div className="p-4 border-t border-white/5 pb-8 md:pb-4">
           <Button variant="danger" className="w-full justify-center" onClick={onLeave}>
             <LogOut size={16} className="mr-2" />
             Leave Room
@@ -307,10 +333,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col relative w-full h-[100dvh]">
         {/* Header */}
-        <header className="h-14 md:h-16 shrink-0 border-b border-white/5 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-30">
+        <header className="h-14 md:h-16 shrink-0 border-b border-white/5 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-30 shadow-sm">
           <div className="flex items-center gap-3">
             <button 
-              className="md:hidden p-2 text-slate-300 hover:bg-white/5 rounded-lg"
+              className="md:hidden p-2 text-slate-300 hover:bg-white/5 rounded-lg active:scale-95 transition-transform"
               onClick={() => setShowSidebar(true)}
             >
               <Menu size={24} />
@@ -334,7 +360,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               {copied ? 'Copied!' : 'Share Link'}
             </Button>
             
-            <button onClick={copyRoomLink} className="sm:hidden p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-full">
+            <button onClick={copyRoomLink} className="sm:hidden p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-full active:scale-95 transition-transform">
                {copied ? <Check size={20} /> : <LinkIcon size={20} />}
             </button>
           </div>
@@ -366,7 +392,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         </div>
 
         {/* Input Area */}
-        <div className="p-3 md:p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20 safe-area-bottom">
+        {/* Added pb-[env(safe-area-inset-bottom)] for iPhone home bar area */}
+        <div className="p-2 md:p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20 pb-[env(safe-area-inset-bottom)]">
           
           {/* FLOATING AREA: Notifications & Typing Indicators */}
           <div className="absolute bottom-full left-0 w-full px-4 pb-2 pointer-events-none flex flex-col items-center gap-2">
@@ -388,7 +415,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
             {/* 2. Typing Indicators (Users & AI) */}
             {(activeTypers.length > 0 || isAiThinking) && (
-               <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up">
+               <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up mb-1">
                  {isAiThinking && (
                    <div className="flex items-center gap-2 text-emerald-400 border-r border-white/10 pr-3 mr-1">
                       <Sparkles size={14} className="animate-pulse" />
@@ -434,16 +461,35 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
              </div>
           )}
 
-          <div className="max-w-4xl mx-auto flex items-end gap-2 bg-slate-800/50 p-2 rounded-2xl border border-white/10 relative">
+          <div className="max-w-4xl mx-auto flex items-end gap-2 bg-slate-800/80 p-1.5 md:p-2 rounded-2xl border border-white/10 relative shadow-sm">
             
-            <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              onClick={() => setShowEmoji(!showEmoji)}
-              disabled={!!currentUser?.isMuted}
-            >
-              <Smile size={24} />
-            </button>
+            <div className="flex items-center gap-0.5 md:gap-1">
+              <button 
+                className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                onClick={() => setShowEmoji(!showEmoji)}
+                disabled={!!currentUser?.isMuted}
+              >
+                <Smile size={20} className="md:w-6 md:h-6" />
+              </button>
 
+              <button 
+                className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                onClick={handleAtButtonClick}
+                title="Mention someone"
+                disabled={!!currentUser?.isMuted}
+              >
+                <AtSign size={20} className="md:w-6 md:h-6" />
+              </button>
+
+              <button 
+                className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!!currentUser?.isMuted}
+              >
+                <ImageIcon size={20} className="md:w-6 md:h-6" />
+              </button>
+            </div>
+            
             {showEmoji && (
                <div className="absolute bottom-full left-0 mb-2 z-50 animate-slide-up shadow-2xl rounded-2xl overflow-hidden">
                  <EmojiPicker 
@@ -457,22 +503,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                </div>
             )}
 
-            <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              onClick={handleAtButtonClick}
-              title="Mention someone"
-              disabled={!!currentUser?.isMuted}
-            >
-              <AtSign size={24} />
-            </button>
-
-            <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!!currentUser?.isMuted}
-            >
-              <ImageIcon size={24} />
-            </button>
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -487,18 +517,20 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 type="text"
                 value={currentUser?.isMuted ? "You are muted by the host." : inputValue}
                 onChange={handleInputChange}
-                placeholder={currentUser?.isMuted ? "" : "Type a message or @..."}
-                className="w-full bg-transparent text-white placeholder-slate-500 focus:outline-none py-3 px-2 text-sm md:text-base disabled:text-slate-500"
+                onPaste={handlePaste}
+                placeholder={currentUser?.isMuted ? "" : "Type a message..."}
+                className="w-full bg-transparent text-white placeholder-slate-500 focus:outline-none py-2.5 md:py-3 px-2 text-sm md:text-base disabled:text-slate-500 min-w-0"
                 enterKeyHint="send"
                 disabled={!!currentUser?.isMuted}
+                autoComplete="off"
               />
               <Button 
                 type="submit" 
                 variant="primary" 
-                className="rounded-xl px-4"
+                className="rounded-xl px-3 md:px-4 active:scale-95 transition-transform"
                 disabled={!inputValue.trim() || !!currentUser?.isMuted}
               >
-                <Send size={20} />
+                <Send size={18} className="md:w-5 md:h-5" />
               </Button>
             </form>
           </div>
