@@ -26,7 +26,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Typing Logic Refs
   const typingTimeoutRef = useRef<any>(null);
+  const lastTypingSentRef = useRef<number>(0);
 
   // Auto scroll to bottom
   useEffect(() => {
@@ -60,9 +63,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     setShowEmoji(false);
     setMentionSearch(null);
     
-    // Clear typing status
+    // Clear typing status immediately on send
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     setTyping(false);
+    lastTypingSentRef.current = 0;
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,18 +83,25 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       setMentionSearch(null);
     }
 
-    // Typing indicator logic
-    if (!typingTimeoutRef.current) {
+    // Improved Typing Indicator Logic (Throttled)
+    const now = Date.now();
+    
+    // 1. If not currently marked as typing, or it's been > 1.5s since last "I'm typing" packet
+    //    send the packet again. This ensures validity even if packet loss occurs.
+    if (now - lastTypingSentRef.current > 1500) {
       setTyping(true);
+      lastTypingSentRef.current = now;
     }
     
+    // 2. Clear existing timeout to stop "I stopped typing"
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
     
-    // Stop typing after 2 seconds
+    // 3. Set new timeout. If no input for 2s, send "false".
     typingTimeoutRef.current = setTimeout(() => {
       setTyping(false);
+      lastTypingSentRef.current = 0;
       typingTimeoutRef.current = null;
     }, 2000);
   };

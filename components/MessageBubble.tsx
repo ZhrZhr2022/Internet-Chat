@@ -22,12 +22,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, o
     );
   }
 
+  // Changed items-end to items-start for top alignment of avatars
   return (
     <div className={`flex w-full mb-4 animate-slide-up ${isSelf ? 'justify-end' : 'justify-start'}`}>
-      <div className={`flex max-w-[85%] md:max-w-[70%] ${isSelf ? 'flex-row-reverse' : 'flex-row'} items-end gap-2`}>
+      <div className={`flex max-w-[85%] md:max-w-[70%] ${isSelf ? 'flex-row-reverse' : 'flex-row'} items-start gap-2`}>
         
         {/* Avatar */}
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 ${
           message.type === MessageType.AI ? 'bg-gradient-to-br from-emerald-400 to-cyan-500' : 
           isSelf ? 'bg-gradient-to-br from-indigo-500 to-purple-600' : 'bg-slate-700'
         }`}>
@@ -47,10 +48,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isSelf, o
 
           <div className={`px-4 py-2.5 rounded-2xl shadow-sm ${
             isSelf 
-              ? 'bg-indigo-600 text-white rounded-br-none' 
+              ? 'bg-indigo-600 text-white rounded-tr-none' 
               : message.type === MessageType.AI 
-                ? 'bg-slate-800/80 border border-emerald-500/30 text-emerald-50 rounded-bl-none'
-                : 'bg-slate-800 text-slate-100 rounded-bl-none'
+                ? 'bg-slate-800/80 border border-emerald-500/30 text-emerald-50 rounded-tl-none'
+                : 'bg-slate-800 text-slate-100 rounded-tl-none'
           }`}>
             {message.type === MessageType.IMAGE ? (
               <img 

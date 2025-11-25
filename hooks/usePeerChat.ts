@@ -17,14 +17,16 @@ const PEER_CONFIG = {
       { urls: 'stun:stun.qq.com:3478' },
       // Xiaomi - Good backup for China
       { urls: 'stun:stun.miwifi.com:3478' },
-      // Twilio - Good global backup
+      // Google - Global backup (sometimes works)
+      { urls: 'stun:stun.l.google.com:19302' },
+      // Twilio - Another robust backup
       { urls: 'stun:global.stun.twilio.com:3478' }
     ],
     iceCandidatePoolSize: 10,
     sdpSemantics: 'unified-plan'
   },
-  // Keep alive pings to prevent NAT timeouts (common in 4G/5G)
-  pingInterval: 5000, 
+  // Aggressive keep alive pings to prevent NAT timeouts (common in China 4G/5G)
+  pingInterval: 2000, 
   debug: 1 // Errors only
 };
 
@@ -75,7 +77,9 @@ export const usePeerChat = () => {
 
   const handleTypingUpdate = useCallback((name: string, isTyping: boolean) => {
     setState(prev => {
+      // Remove the user from the list first
       const others = prev.typingUsers.filter(n => n !== name);
+      // If typing, add them back (this prevents duplicates)
       if (isTyping) {
         return { ...prev, typingUsers: [...others, name] };
       }
@@ -106,6 +110,9 @@ export const usePeerChat = () => {
       type: 'typing_status',
       payload: { name: currentUser.name, isTyping }
     };
+    
+    // Update local state immediately for smoother UI (optional, but good for self-feedback if needed)
+    // handleTypingUpdate(currentUser.name, isTyping); 
     
     if (currentUser.isHost) {
       broadcast(payload);
@@ -169,13 +176,12 @@ export const usePeerChat = () => {
         console.log('Heartbeat: Reconnecting to signaling server...');
         peer.reconnect();
       }
-    }, 5000); 
+    }, 4000); 
   };
 
   const setupCommonPeerEvents = (peer: Peer) => {
     peer.on('disconnected', () => {
       // Don't auto-reconnect immediately here to avoid loops, let heartbeat handle it
-      // unless it was a temporary network blip
     });
 
     peer.on('close', () => {
