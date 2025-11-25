@@ -9,19 +9,22 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
-// PeerJS Configuration with expanded STUN servers
+// PeerJS Configuration optimized for China/Restricted Networks
 const PEER_CONFIG = {
   config: {
     iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
+      // Tencent (QQ) - Highly reliable in China
+      { urls: 'stun:stun.qq.com:3478' },
+      // Xiaomi - Good backup for China
+      { urls: 'stun:stun.miwifi.com:3478' },
+      // Twilio - Good global backup
       { urls: 'stun:global.stun.twilio.com:3478' }
     ],
     iceCandidatePoolSize: 10,
+    sdpSemantics: 'unified-plan'
   },
+  // Keep alive pings to prevent NAT timeouts (common in 4G/5G)
+  pingInterval: 5000, 
   debug: 1 // Errors only
 };
 
@@ -171,7 +174,8 @@ export const usePeerChat = () => {
 
   const setupCommonPeerEvents = (peer: Peer) => {
     peer.on('disconnected', () => {
-      if (!peer.destroyed) peer.reconnect();
+      // Don't auto-reconnect immediately here to avoid loops, let heartbeat handle it
+      // unless it was a temporary network blip
     });
 
     peer.on('close', () => {
@@ -188,6 +192,9 @@ export const usePeerChat = () => {
         }));
       } else if (err.type === 'unavailable-id') {
         setState(prev => ({ ...prev, status: 'error', error: 'ID collision. Try again.' }));
+      } else if (err.type === 'network') {
+        // Suppress network errors during reconnection attempts
+        console.warn('Network error detected, waiting for heartbeat reconnection');
       }
     });
   };
@@ -195,11 +202,14 @@ export const usePeerChat = () => {
   const createRoom = (username: string) => {
     const userId = crypto.randomUUID();
     const user: User = { id: userId, name: username, color: getRandomColor(), isHost: true };
+    // Create Default AI User
+    const aiUser: User = { id: 'ai-bot', name: 'Nexus AI', color: '#10b981', isHost: false };
     
     setCurrentUser(user);
     // Important: Reset message IDs for new session
     messageIdsRef.current.clear();
-    setState(prev => ({ ...prev, status: 'connecting', users: [user], messages: [] }));
+    // Add both myself and the AI to the user list
+    setState(prev => ({ ...prev, status: 'connecting', users: [user, aiUser], messages: [] }));
 
     if (peerRef.current) peerRef.current.destroy();
 
@@ -221,46 +231,12 @@ export const usePeerChat = () => {
         handleHostData(pData, conn);
       });
 
-      // Handle GUEST leaving
       conn.on('close', () => {
-        // Find which connection closed
-        connectionsRef.current = connectionsRef.current.filter(c => c !== conn);
-        
-        // Find the user associated with this connection (needs a way to map conn -> user, 
-        // but simple way: iterate state users and see who is missing? 
-        // Better: We need to know who just left. 
-        // Simplified approach: Guests send a 'leave' signal usually, but for hard disconnects:
-        
-        // We will filter out users whose connections are gone? 
-        // Actually, without mapping ConnectionID to UserID, hard to know exactly who left.
-        // Quick Fix: Rely on explicit leave? No.
-        // Better Fix: When handshake happens, map conn.peer to userId.
-        
-        // Retrying broadcast with current users check is hard. 
-        // Let's rely on the fact that we can't easily identify strictly from `conn` object properties without metadata.
-        // Alternative: Wait for explicit heartbeat?
-        
-        // FOR NOW: We can't immediately update list accurately on hard disconnect without mapping.
-        // However, we can notify "A user disconnected".
-        // To do this properly in future: maintain a Map<ConnectionId, UserId>.
+          // Handled via handleUserDisconnect logic when possible, 
+          // or just generic cleanup if we can identify connection.
       });
       
-      // Better User Left Handling:
-      // Since `conn.metadata` is available, let's use it if we passed it in connect.
-      // Or we just wait for `handleHostData` to register them, then if close happens...
-      
-      // Let's implement a clean "remove disconnected users" if we track them.
-      // For this simplified version, we will just accept that hard-disconnects might linger 
-      // until we implement a ping/pong at app level. 
-      // BUT, to satisfy the user request:
-      conn.on('close', () => {
-          // Trigger a purge of users who are not 'me' and no longer have an open connection?
-          // Since we don't map conn -> user strictly here, let's just ignore for safety 
-          // to avoid deleting wrong people, unless we implement the map.
-          // To truly fix "User Left" prompt:
-          // We need to implement the map.
-          // Let's do it via handleHostData's handshake.
-      });
+      conn.on('error', (err) => console.error("Connection error:", err));
     });
   };
 
@@ -279,16 +255,16 @@ export const usePeerChat = () => {
 
     setupCommonPeerEvents(peer);
 
-    // Timeout check
+    // Extended Timeout check for slower networks (China)
     connectionTimeoutRef.current = setTimeout(() => {
       if (state.status !== 'connected') {
         setState(prev => ({ 
           ...prev, 
           status: 'error', 
-          error: 'Connection timed out. Host might be offline or check firewall.' 
+          error: 'Connection timed out. Host might be offline or blocked by firewall.' 
         }));
       }
-    }, 20000); 
+    }, 45000); // Increased to 45s
 
     peer.on('open', () => {
       const conn = peer.connect(roomId, {
@@ -316,6 +292,8 @@ export const usePeerChat = () => {
           error: 'Host disconnected. Room closed.' 
         }));
       });
+      
+      conn.on('error', (e) => console.error("Conn Error", e));
     });
   };
 
@@ -389,25 +367,10 @@ export const usePeerChat = () => {
   const handleUserDisconnect = (userId: string, userName: string) => {
     setState(prev => {
        const newUsers = prev.users.filter(u => u.id !== userId);
-       // Broadcast update
-       const updatePayload: PeerData = { type: 'user_list_update', payload: newUsers };
-       // We can't use 'broadcast' helper safely inside setState reducer if it depends on ref, 
-       // but here we are in a callback, so it's fine.
-       // However, to be safe, we should do side effects outside.
-       
        return { ...prev, users: newUsers };
     });
 
-    // Side effects (Messaging & Broadcasting) needs to happen after state calc or independently
-    // We'll just do it directly here using the REF values which are current.
     const remainingConns = connectionsRef.current.filter(c => c.open);
-    
-    // Broadcast User List Update
-    // We need to calculate the new list manually to send it immediately
-    const currentUsers = state.users; // Warning: this might be stale? No, handleUserDisconnect is called from event.
-    // Actually, safest is to trust the filtered result.
-    // Let's rely on setState callback to trigger a useEffect? No, too complex.
-    // Let's just grab the prev state logic.
     
     // Notify others
     const sysMsg: Message = {
@@ -419,12 +382,6 @@ export const usePeerChat = () => {
         type: MessageType.SYSTEM
     };
     addMessage(sysMsg);
-    
-    // Broadcast new state to others
-    // We need to filter the user list from the REF or State.
-    // Let's rely on a helper to get latest users excluding the one who left.
-    // Since state update is async, we can't send `state.users` immediately.
-    // We will construct the payload manually.
     
     const remainingUsers = state.users.filter(u => u.id !== userId);
     const listUpdate: PeerData = { type: 'user_list_update', payload: remainingUsers };

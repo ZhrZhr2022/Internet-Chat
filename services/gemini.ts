@@ -1,6 +1,10 @@
 import { Message } from "../types";
 
 const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
+// WARNING: Hardcoding API keys in frontend code is insecure. 
+// Anyone can view this key. Use with caution or for testing only.
+const DEEPSEEK_API_KEY = "sk-0438341f9a094b9798be75f4ceaa37bd";
+
 const SYSTEM_INSTRUCTION = `You are Nexus AI, a helpful and witty assistant inside a group chat. 
 Your goal is to help users, answer questions, and sometimes make jokes. 
 Keep your responses relatively concise (under 150 words) unless asked for a detailed explanation. 
@@ -11,7 +15,7 @@ export const generateAIResponse = async (
   currentMessage: string,
   history: Message[]
 ): Promise<string> => {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const apiKey = DEEPSEEK_API_KEY;
 
   if (!apiKey) {
     console.warn("DeepSeek API Key is missing.");
