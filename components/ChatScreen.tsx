@@ -1,7 +1,8 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import EmojiPicker, { EmojiClickData, Theme } from 'emoji-picker-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ArrowDown, Sparkles, AtSign } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, LogOut, Copy, Check, Users, Menu, X, Bot, MessageSquare, Share2, Link as LinkIcon, ArrowDown, Sparkles, AtSign, Ban, MicOff, Mic } from 'lucide-react';
 import { usePeerChat } from '../hooks/usePeerChat';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
@@ -13,7 +14,7 @@ interface ChatScreenProps {
 }
 
 export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
-  const { state, currentUser, isAiThinking, sendMessage, setTyping } = chat;
+  const { state, currentUser, isAiThinking, sendMessage, setTyping, kickUser, toggleMuteUser } = chat;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   
@@ -48,7 +49,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const handleScroll = () => {
     if (!messagesContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-    // Check if user is near bottom (within 100px)
     const isBottom = scrollHeight - scrollTop - clientHeight < 100;
     setIsAtBottom(isBottom);
     if (isBottom) {
@@ -62,15 +62,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     if (state.messages.length === 0) return;
 
     const lastMsg = state.messages[state.messages.length - 1];
-    
-    // Check if last message is a mention for me
     const isMention = currentUser && lastMsg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
 
     if (isAtBottom || lastMsg.senderId === currentUser?.id) {
-      // If at bottom OR I sent the message, auto scroll
       scrollToBottom();
     } else {
-      // Otherwise, increment unread
       setUnreadCount(prev => prev + 1);
       if (isMention) setHasUnreadMention(true);
     }
@@ -84,18 +80,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       return;
     }
     const search = mentionSearch.toLowerCase();
-    // Filter users, ensuring no duplicates. 
-    // Nexus AI is in state.users, so it will be included automatically.
     const matches = state.users.filter(u => 
       u.name.toLowerCase().includes(search) && u.id !== currentUser?.id
     );
-    
     setFilteredUsers(matches);
   }, [mentionSearch, state.users, currentUser]);
 
   const handleSendMessage = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || currentUser?.isMuted) return;
     sendMessage(inputValue.trim());
     setInputValue('');
     setShowEmoji(false);
@@ -144,12 +137,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   };
 
   const handleAtButtonClick = () => {
+    if (currentUser?.isMuted) return;
     setInputValue(prev => prev + '@');
-    setMentionSearch(''); // Trigger empty search to show all users
+    setMentionSearch('');
     inputRef.current?.focus();
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (currentUser?.isMuted) return;
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 2 * 1024 * 1024) {
@@ -178,7 +173,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
   const activeTypers = state.typingUsers.filter(name => name !== currentUser?.name);
 
-  // Helper to check if a message mentions the current user
   const isMessageMentioningMe = (msg: any) => {
     if (!currentUser) return false;
     return msg.content.toLowerCase().includes(`@${currentUser.name.toLowerCase()}`);
@@ -254,20 +248,48 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
              </p>
              <div className="space-y-2">
                {state.users.map(user => (
-                 <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg transition-colors">
-                   <div 
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg shrink-0"
-                    style={{ backgroundColor: user.color }}
-                   >
-                     {user.name.substring(0,2).toUpperCase()}
+                 <div key={user.id} className="group flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg transition-colors relative">
+                   <div className="relative">
+                    <div 
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg shrink-0"
+                      style={{ backgroundColor: user.color }}
+                    >
+                      {user.name.substring(0,2).toUpperCase()}
+                    </div>
+                    {/* Status Dot */}
+                    <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900 ${
+                      user.status === 'away' ? 'bg-yellow-500' : 'bg-emerald-500'
+                    }`} title={user.status || 'online'}></div>
                    </div>
+
                    <div className="flex-1 min-w-0">
-                     <p className="text-sm font-medium text-slate-200 truncate">
+                     <p className="text-sm font-medium text-slate-200 truncate flex items-center gap-1">
                        {user.name} 
                        {user.id === currentUser?.id && <span className="text-slate-500 ml-1">(You)</span>}
+                       {user.isMuted && <MicOff size={12} className="text-red-400" />}
                      </p>
                      {user.isHost && <p className="text-[10px] text-indigo-400">HOST</p>}
                    </div>
+
+                   {/* Admin Controls */}
+                   {currentUser?.isHost && !user.isHost && user.id !== 'ai-bot' && (
+                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                       <button 
+                        onClick={() => toggleMuteUser(user.id)}
+                        className={`p-1 rounded hover:bg-white/10 ${user.isMuted ? 'text-red-400' : 'text-slate-400'}`}
+                        title={user.isMuted ? "Unmute" : "Mute"}
+                       >
+                         {user.isMuted ? <MicOff size={14}/> : <Mic size={14}/>}
+                       </button>
+                       <button 
+                        onClick={() => kickUser(user.id)}
+                        className="p-1 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400"
+                        title="Kick User"
+                       >
+                         <Ban size={14}/>
+                       </button>
+                     </div>
+                   )}
                  </div>
                ))}
              </div>
@@ -367,15 +389,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
             {/* 2. Typing Indicators (Users & AI) */}
             {(activeTypers.length > 0 || isAiThinking) && (
                <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up">
-                 {/* AI Thinking Status */}
                  {isAiThinking && (
                    <div className="flex items-center gap-2 text-emerald-400 border-r border-white/10 pr-3 mr-1">
                       <Sparkles size={14} className="animate-pulse" />
                       <span className="text-xs font-medium">Nexus AI is thinking...</span>
                    </div>
                  )}
-                 
-                 {/* User Typing Status */}
                  {activeTypers.length > 0 && (
                    <div className="flex items-center gap-2 text-indigo-300">
                      <div className="flex gap-1">
@@ -418,8 +437,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
           <div className="max-w-4xl mx-auto flex items-end gap-2 bg-slate-800/50 p-2 rounded-2xl border border-white/10 relative">
             
             <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors"
+              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               onClick={() => setShowEmoji(!showEmoji)}
+              disabled={!!currentUser?.isMuted}
             >
               <Smile size={24} />
             </button>
@@ -438,16 +458,18 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
             )}
 
             <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors"
+              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               onClick={handleAtButtonClick}
               title="Mention someone"
+              disabled={!!currentUser?.isMuted}
             >
               <AtSign size={24} />
             </button>
 
             <button 
-              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors"
+              className="p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               onClick={() => fileInputRef.current?.click()}
+              disabled={!!currentUser?.isMuted}
             >
               <ImageIcon size={24} />
             </button>
@@ -463,17 +485,18 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               <input
                 ref={inputRef}
                 type="text"
-                value={inputValue}
+                value={currentUser?.isMuted ? "You are muted by the host." : inputValue}
                 onChange={handleInputChange}
-                placeholder="Type a message or @..."
-                className="w-full bg-transparent text-white placeholder-slate-500 focus:outline-none py-3 px-2 text-sm md:text-base"
+                placeholder={currentUser?.isMuted ? "" : "Type a message or @..."}
+                className="w-full bg-transparent text-white placeholder-slate-500 focus:outline-none py-3 px-2 text-sm md:text-base disabled:text-slate-500"
                 enterKeyHint="send"
+                disabled={!!currentUser?.isMuted}
               />
               <Button 
                 type="submit" 
                 variant="primary" 
                 className="rounded-xl px-4"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || !!currentUser?.isMuted}
               >
                 <Send size={20} />
               </Button>

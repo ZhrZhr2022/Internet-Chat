@@ -1,3 +1,4 @@
+
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Peer, { DataConnection } from 'peerjs';
 import { User, Message, ChatState, MessageType, PeerData } from '../types';
@@ -9,23 +10,21 @@ const getRandomColor = () => {
   return colors[Math.floor(Math.random() * colors.length)];
 };
 
-// PeerJS Configuration optimized for China/Restricted Networks
+// Storage Key
+const STORAGE_KEY = 'nexus_chat_profile';
+
+// PeerJS Configuration
 const PEER_CONFIG = {
   config: {
     iceServers: [
-      // Tencent (QQ) - Highly reliable in China
       { urls: 'stun:stun.qq.com:3478' },
-      // Xiaomi - Good backup for China
       { urls: 'stun:stun.miwifi.com:3478' },
-      // Google - Global backup (sometimes works)
       { urls: 'stun:stun.l.google.com:19302' },
-      // Twilio - Another robust backup
       { urls: 'stun:global.stun.twilio.com:3478' }
     ],
     iceCandidatePoolSize: 10,
     sdpSemantics: 'unified-plan'
   },
-  // Aggressive keep alive pings to prevent NAT timeouts (common in China 4G/5G)
   pingInterval: 2000, 
   debug: 1 // Errors only
 };
@@ -47,29 +46,67 @@ export const usePeerChat = () => {
   const connectionsRef = useRef<DataConnection[]>([]); // Host keeps track of all guests
   const hostConnectionRef = useRef<DataConnection | null>(null); // Guest keeps track of host
   
-  // SYNC References to prevent race conditions (Fixes double message bug)
   const messageIdsRef = useRef<Set<string>>(new Set());
   
-  // Timers
   const heartbeatTimerRef = useRef<any>(null);
   const connectionTimeoutRef = useRef<any>(null);
+  const retryCountRef = useRef(0);
+
+  // --- Persistence Logic ---
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const profile = JSON.parse(stored);
+        // We restore ID, name, color but NOT isHost (that depends on action)
+        setCurrentUser({ ...profile, isHost: false, status: 'online', isMuted: false });
+      }
+    } catch (e) {
+      console.error("Failed to load profile", e);
+    }
+  }, []);
+
+  const saveProfile = (user: User) => {
+    try {
+      const profile = { id: user.id, name: user.name, color: user.color };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+    } catch (e) {
+      console.error("Failed to save profile", e);
+    }
+  };
+
+  // --- Status & Visibility Logic ---
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!currentUser || state.status !== 'connected') return;
+
+      const newStatus = document.hidden ? 'away' : 'online';
+      
+      // Update local state temporarily? No, wait for server/host echo ideally, 
+      // but for responsiveness we can trigger it.
+      
+      const payload: PeerData = {
+        type: 'status_update',
+        payload: { userId: currentUser.id, status: newStatus }
+      };
+
+      if (currentUser.isHost) {
+        handleStatusUpdate(currentUser.id, newStatus); // Host updates self locally
+      } else {
+        sendToHost(payload);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [currentUser, state.status]);
 
   // --- Actions ---
 
-  // Synchronously check and add message to avoid duplicates
   const addMessage = useCallback((msg: Message) => {
-    // If we have already processed this ID, ignore it completely
-    if (messageIdsRef.current.has(msg.id)) {
-      return;
-    }
-    
-    // Mark as seen
+    if (messageIdsRef.current.has(msg.id)) return;
     messageIdsRef.current.add(msg.id);
-
-    setState(prev => ({
-      ...prev,
-      messages: [...prev.messages, msg]
-    }));
+    setState(prev => ({ ...prev, messages: [...prev.messages, msg] }));
   }, []);
 
   const updateUsers = useCallback((users: User[]) => {
@@ -78,50 +115,75 @@ export const usePeerChat = () => {
 
   const handleTypingUpdate = useCallback((name: string, isTyping: boolean) => {
     setState(prev => {
-      // Remove the user from the list first
       const others = prev.typingUsers.filter(n => n !== name);
-      // If typing, add them back (this prevents duplicates)
-      if (isTyping) {
-        return { ...prev, typingUsers: [...others, name] };
-      }
+      if (isTyping) return { ...prev, typingUsers: [...others, name] };
       return { ...prev, typingUsers: others };
     });
   }, []);
 
-  // Broadcast data to all connected peers (Host function)
+  // Admin Actions
+  const kickUser = useCallback((targetUserId: string) => {
+    if (!currentUser?.isHost) return;
+
+    // Find connection
+    const conn = connectionsRef.current.find(c => {
+      const uId = connMapRef.current.get(c.peer);
+      return uId === targetUserId;
+    });
+
+    if (conn) {
+      conn.send({ type: 'kick_notification', payload: 'You have been kicked by the host.' });
+      setTimeout(() => conn.close(), 500); // Give time to receive message
+    }
+    
+    // Fallback: manually trigger disconnect logic in case close event lags
+    const targetUser = state.users.find(u => u.id === targetUserId);
+    if (targetUser) handleUserDisconnect(targetUserId, targetUser.name);
+
+  }, [currentUser, state.users]);
+
+  const toggleMuteUser = useCallback((targetUserId: string) => {
+    if (!currentUser?.isHost) return;
+    
+    setState(prev => {
+      const updatedUsers = prev.users.map(u => 
+        u.id === targetUserId ? { ...u, isMuted: !u.isMuted } : u
+      );
+      // Broadcast new state
+      broadcast({ type: 'user_list_update', payload: updatedUsers });
+      return { ...prev, users: updatedUsers };
+    });
+  }, [currentUser]);
+
   const broadcast = useCallback((data: PeerData) => {
     connectionsRef.current.forEach(conn => {
-      if (conn.open) {
-        conn.send(data);
-      }
+      if (conn.open) conn.send(data);
     });
   }, []);
 
-  // Send to host (Guest function)
   const sendToHost = useCallback((data: PeerData) => {
-    if (hostConnectionRef.current && hostConnectionRef.current.open) {
+    if (hostConnectionRef.current?.open) {
       hostConnectionRef.current.send(data);
     }
   }, []);
 
-  // Set typing status
   const setTyping = useCallback((isTyping: boolean) => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.isMuted) return; // Prevent typing if muted
     const payload: PeerData = {
       type: 'typing_status',
       payload: { name: currentUser.name, isTyping }
     };
-    
-    if (currentUser.isHost) {
-      broadcast(payload);
-    } else {
-      sendToHost(payload);
-    }
+    if (currentUser.isHost) broadcast(payload);
+    else sendToHost(payload);
   }, [currentUser, broadcast, sendToHost]);
 
-  // Process a new message (Send & Display)
   const sendMessage = async (content: string, type: MessageType = MessageType.TEXT) => {
     if (!currentUser) return;
+    // Client-side mute check
+    if (currentUser.isMuted) {
+      alert("You have been muted by the host.");
+      return;
+    }
 
     const newMessage: Message = {
       id: crypto.randomUUID(),
@@ -132,27 +194,17 @@ export const usePeerChat = () => {
       type
     };
 
-    // Add locally first
     addMessage(newMessage);
-
     const payload: PeerData = { type: 'message', payload: newMessage };
     
-    // Distribute
-    if (currentUser.isHost) {
-      broadcast(payload);
-    } else {
-      sendToHost(payload);
-    }
+    if (currentUser.isHost) broadcast(payload);
+    else sendToHost(payload);
 
-    // AI Check (Only host processes AI to avoid duplicates)
     if (currentUser.isHost && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
       setIsAiThinking(true);
-      // Pass the updated messages including the new one
       const currentMessages = [...state.messages, newMessage];
-      
       try {
         const aiResponseText = await generateAIResponse(content, currentMessages);
-        
         const aiMessage: Message = {
           id: crypto.randomUUID(),
           senderId: 'ai-bot',
@@ -161,7 +213,6 @@ export const usePeerChat = () => {
           timestamp: Date.now(),
           type: MessageType.AI
         };
-
         addMessage(aiMessage);
         broadcast({ type: 'message', payload: aiMessage });
       } finally {
@@ -172,80 +223,35 @@ export const usePeerChat = () => {
 
   // --- Connection Logic ---
 
-  // Keep the signaling connection alive
   const startHeartbeat = (peer: Peer) => {
     if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
-    
     heartbeatTimerRef.current = setInterval(() => {
       if (!peer || peer.destroyed) return;
-      
-      // 1. Signaling Server Reconnect
-      if (peer.disconnected && !peer.destroyed) {
-        console.log('Heartbeat: Reconnecting to signaling server...');
-        peer.reconnect();
-      }
-
-      // 2. Keep-Alive Pings for Data Connections (NAT Traversal)
-      if (currentUser?.isHost) {
-        connectionsRef.current.forEach(conn => {
-          if (conn.open) {
-             // Send empty blob or small string to keep NAT entry active
-             // Using a specialized type that receivers ignore or handle silently
-             // PeerJS doesn't have a native ping, so we just check open state implicitly
-             // But strictly speaking, sending data is the best way.
-             // We'll skip sending actual data to avoid UI clutter, 
-             // PeerJS's reliable channel usually handles keepalives internally.
-          }
-        });
-      }
-
+      if (peer.disconnected && !peer.destroyed) peer.reconnect();
     }, 2000); 
   };
 
-  const setupCommonPeerEvents = (peer: Peer) => {
-    peer.on('disconnected', () => {
-      // Don't auto-reconnect immediately here to avoid loops, let heartbeat handle it
-    });
-
-    peer.on('close', () => {
-      setState(prev => ({ ...prev, status: 'error', error: 'Connection lost. Please reload.' }));
-    });
-
-    peer.on('error', (err: any) => {
-      console.error('Peer error:', err);
-      if (err.type === 'peer-unavailable') {
-        setState(prev => ({ 
-          ...prev, 
-          status: 'error', 
-          error: 'Room ID not found. The host might be offline or check the ID.' 
-        }));
-      } else if (err.type === 'unavailable-id') {
-        setState(prev => ({ ...prev, status: 'error', error: 'ID collision. Try again.' }));
-      } else if (err.type === 'network') {
-        // Suppress network errors during reconnection attempts
-        console.warn('Network error detected, waiting for heartbeat reconnection');
-      }
-    });
-  };
-
   const createRoom = (username: string) => {
-    const userId = crypto.randomUUID();
-    const user: User = { id: userId, name: username, color: getRandomColor(), isHost: true };
-    // Create Default AI User
-    const aiUser: User = { id: 'ai-bot', name: 'Nexus AI', color: '#10b981', isHost: false };
+    // Reuse ID if exists, or gen new one
+    const userId = currentUser?.id || crypto.randomUUID();
+    const user: User = { 
+      id: userId, 
+      name: username, 
+      color: currentUser?.color || getRandomColor(), 
+      isHost: true, 
+      status: 'online', 
+      isMuted: false 
+    };
+    const aiUser: User = { id: 'ai-bot', name: 'Nexus AI', color: '#10b981', isHost: false, status: 'online' };
     
     setCurrentUser(user);
-    // Important: Reset message IDs for new session
+    saveProfile(user);
     messageIdsRef.current.clear();
-    // Add both myself and the AI to the user list
     setState(prev => ({ ...prev, status: 'connecting', users: [user, aiUser], messages: [] }));
 
     if (peerRef.current) peerRef.current.destroy();
-
     const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
-
-    setupCommonPeerEvents(peer);
 
     peer.on('open', (id) => {
       setState(prev => ({ ...prev, roomId: id, status: 'connected' }));
@@ -254,102 +260,123 @@ export const usePeerChat = () => {
 
     peer.on('connection', (conn) => {
       connectionsRef.current.push(conn);
-      
-      conn.on('data', (data: any) => {
-        const pData = data as PeerData;
-        handleHostData(pData, conn);
-      });
-
-      conn.on('close', () => {
-          // Handled via handleUserDisconnect logic
-      });
-      
+      conn.on('data', (data: any) => handleHostData(data as PeerData, conn));
+      conn.on('close', () => { /* Handled via map */ });
       conn.on('error', (err) => console.error("Connection error:", err));
+    });
+
+    peer.on('error', (err: any) => {
+       console.error("Peer Error", err);
+       setState(prev => ({ ...prev, status: 'error', error: `Host Error: ${err.type}` }));
     });
   };
 
   const joinRoom = (roomId: string, username: string) => {
-    const userId = crypto.randomUUID();
-    const user: User = { id: userId, name: username, color: getRandomColor(), isHost: false };
+    const userId = currentUser?.id || crypto.randomUUID();
+    const user: User = { 
+      id: userId, 
+      name: username, 
+      color: currentUser?.color || getRandomColor(), 
+      isHost: false, 
+      status: 'online',
+      isMuted: false 
+    };
     
     setCurrentUser(user);
+    saveProfile(user);
     messageIdsRef.current.clear();
     setState(prev => ({ ...prev, status: 'connecting', error: null, messages: [] }));
 
     if (peerRef.current) peerRef.current.destroy();
-
     const peer = new Peer(PEER_CONFIG);
     peerRef.current = peer;
 
-    setupCommonPeerEvents(peer);
-
-    // Extended Timeout check for slower networks (China)
-    connectionTimeoutRef.current = setTimeout(() => {
-      if (state.status !== 'connected') {
-        setState(prev => ({ 
-          ...prev, 
-          status: 'error', 
-          error: 'Connection timed out. Host might be offline or blocked by firewall.' 
-        }));
-      }
-    }, 45000); 
-
-    peer.on('open', () => {
+    // Retry Logic
+    const attemptConnection = () => {
       const conn = peer.connect(roomId, {
         reliable: true,
-        serialization: 'json', // Fix for connectivity issues
-        metadata: { userId, username } // Pass metadata for disconnection tracking
+        serialization: 'json',
+        metadata: { userId, username }
       });
       hostConnectionRef.current = conn;
 
       conn.on('open', () => {
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
+        retryCountRef.current = 0; // Reset retries
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
         conn.send({ type: 'handshake', payload: user });
         startHeartbeat(peer);
       });
 
-      conn.on('data', (data: any) => {
-        handleGuestData(data as PeerData);
-      });
-
+      conn.on('data', (data: any) => handleGuestData(data as PeerData));
+      
       conn.on('close', () => {
-        setState(prev => ({ 
-          ...prev, 
-          status: 'error', 
-          error: 'Host disconnected. Room closed.' 
-        }));
+        if (state.status !== 'kicked') {
+            setState(prev => ({ ...prev, status: 'error', error: 'Host disconnected.' }));
+        }
       });
       
       conn.on('error', (e) => console.error("Conn Error", e));
+    };
+
+    peer.on('open', attemptConnection);
+    
+    peer.on('error', (err: any) => {
+      console.error('Peer error:', err);
+      // Retry for specific errors
+      if (err.type === 'peer-unavailable' && retryCountRef.current < 3) {
+        retryCountRef.current++;
+        console.log(`Retrying connection... Attempt ${retryCountRef.current}`);
+        setTimeout(attemptConnection, 2000);
+      } else {
+        setState(prev => ({ 
+          ...prev, 
+          status: 'error', 
+          error: err.type === 'peer-unavailable' 
+            ? 'Room ID not found. Host might be offline.' 
+            : `Connection Error: ${err.type}` 
+        }));
+      }
     });
+
+    connectionTimeoutRef.current = setTimeout(() => {
+      if (state.status !== 'connected') {
+        setState(prev => ({ ...prev, status: 'error', error: 'Connection timed out.' }));
+      }
+    }, 45000);
   };
 
   // --- Data Handlers ---
 
-  // Map to track connection -> UserID for disconnection handling
   const connMapRef = useRef<Map<string, string>>(new Map());
+
+  const handleStatusUpdate = (userId: string, status: 'online' | 'away') => {
+    setState(prev => {
+        const newUsers = prev.users.map(u => u.id === userId ? { ...u, status } : u);
+        broadcast({ type: 'user_list_update', payload: newUsers });
+        return { ...prev, users: newUsers };
+    });
+  };
 
   const handleHostData = async (data: PeerData, senderConn: DataConnection) => {
     if (data.type === 'handshake') {
       const newUser = data.payload as User;
-      
-      // Track connection
       connMapRef.current.set(senderConn.peer, newUser.id);
       
-      // Set up Close handler SPECIFIC to this user now that we know who they are
-      senderConn.on('close', () => {
-         handleUserDisconnect(newUser.id, newUser.name);
-      });
+      senderConn.on('close', () => handleUserDisconnect(newUser.id, newUser.name));
 
       setState(prev => {
-        // Prevent duplicate user entries
-        if (prev.users.find(u => u.id === newUser.id)) return prev;
+        // Update if exists (reconnect) or add new
+        const existingIndex = prev.users.findIndex(u => u.id === newUser.id);
+        let newUsers;
+        if (existingIndex >= 0) {
+            newUsers = [...prev.users];
+            newUsers[existingIndex] = { ...newUser, status: 'online' }; // Force online on reconnect
+        } else {
+            newUsers = [...prev.users, { ...newUser, status: 'online' }];
+        }
         
-        const newUsers = [...prev.users, newUser];
-        // Broadcast new user list
         broadcast({ type: 'user_list_update', payload: newUsers });
-        // Sync history to NEW user only
         senderConn.send({ type: 'history_sync', payload: prev.messages });
         return { ...prev, users: newUsers };
       });
@@ -367,15 +394,16 @@ export const usePeerChat = () => {
 
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
-      addMessage(msg); 
-      broadcast(data); // Relay to others
+      // Host Mute Check
+      const sender = state.users.find(u => u.id === msg.senderId);
+      if (sender?.isMuted) return; // Drop message
 
-      // DeepSeek AI Check
+      addMessage(msg); 
+      broadcast(data);
+
       if (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai')) {
          setIsAiThinking(true);
-         // Important: Add the new message to history context manually before state updates
          const currentMessages = [...state.messages, msg];
-         
          try {
              const responseText = await generateAIResponse(msg.content, currentMessages);
              const aiMessage: Message = {
@@ -395,19 +423,32 @@ export const usePeerChat = () => {
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
-      broadcast(data); // Relay
+      broadcast(data);
+    } else if (data.type === 'status_update') {
+        const { userId, status } = data.payload;
+        handleStatusUpdate(userId, status);
     }
   };
 
   const handleUserDisconnect = (userId: string, userName: string) => {
     setState(prev => {
+       // Don't remove immediately? No, standard P2P chat removes on disconnect.
+       // We can keep them but mark as offline?
+       // Let's remove to keep list clean, or maybe user wants persistence?
+       // For "temporary chat" requirement, removing is standard, but showing "Offline" is better.
+       // However, to fix "User Left" bugs, removal is safer for logic.
+       // Let's remove.
        const newUsers = prev.users.filter(u => u.id !== userId);
+       
+       const remainingConns = connectionsRef.current.filter(c => c.open);
+       const remainingUsers = newUsers;
+       const listUpdate: PeerData = { type: 'user_list_update', payload: remainingUsers };
+       
+       remainingConns.forEach(conn => conn.send(listUpdate));
+       
        return { ...prev, users: newUsers };
     });
 
-    const remainingConns = connectionsRef.current.filter(c => c.open);
-    
-    // Notify others
     const sysMsg: Message = {
         id: crypto.randomUUID(),
         senderId: 'system',
@@ -417,34 +458,36 @@ export const usePeerChat = () => {
         type: MessageType.SYSTEM
     };
     addMessage(sysMsg);
-    
-    const remainingUsers = state.users.filter(u => u.id !== userId);
-    const listUpdate: PeerData = { type: 'user_list_update', payload: remainingUsers };
-    const msgUpdate: PeerData = { type: 'message', payload: sysMsg };
-
-    remainingConns.forEach(conn => {
-        conn.send(listUpdate);
-        conn.send(msgUpdate);
-    });
+    broadcast({ type: 'message', payload: sysMsg });
   };
 
   const handleGuestData = (data: PeerData) => {
     if (data.type === 'user_list_update') {
+      // Merge with current user to ensure we don't lose our own status locally if update lags
       updateUsers(data.payload);
+      
+      // Update current user Ref if permissions changed (mute)
+      const myUser = (data.payload as User[]).find(u => u.id === currentUser?.id);
+      if (myUser && currentUser) {
+          if (myUser.isMuted !== currentUser.isMuted) {
+             setCurrentUser(prev => prev ? ({ ...prev, isMuted: myUser.isMuted }) : null);
+          }
+      }
+
     } else if (data.type === 'message') {
       addMessage(data.payload);
     } else if (data.type === 'history_sync') {
-      // Bulk add history, checking duplicates
       const history = data.payload as Message[];
       history.forEach(msg => {
-          if(!messageIdsRef.current.has(msg.id)) {
-              messageIdsRef.current.add(msg.id);
-          }
+          if(!messageIdsRef.current.has(msg.id)) messageIdsRef.current.add(msg.id);
       });
       setState(prev => ({ ...prev, messages: history }));
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
+    } else if (data.type === 'kick_notification') {
+        setState(prev => ({ ...prev, status: 'kicked', error: data.payload }));
+        if (hostConnectionRef.current) hostConnectionRef.current.close();
     }
   };
 
@@ -463,6 +506,8 @@ export const usePeerChat = () => {
     createRoom,
     joinRoom,
     sendMessage,
-    setTyping
+    setTyping,
+    kickUser,
+    toggleMuteUser
   };
 };

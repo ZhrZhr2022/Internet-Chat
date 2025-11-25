@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { MessageSquare, Users, Zap, Shield } from 'lucide-react';
 import { Button } from './Button';
@@ -19,6 +20,15 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onCreate, onJoin }
       setInviteId(hash);
       setMode('join');
     }
+
+    // Auto-fill profile
+    try {
+        const stored = localStorage.getItem('nexus_chat_profile');
+        if (stored) {
+            const profile = JSON.parse(stored);
+            if (profile.name) setName(profile.name);
+        }
+    } catch (e) {}
   }, []);
 
   const handleCreate = (e: React.FormEvent) => {
