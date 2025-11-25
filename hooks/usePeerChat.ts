@@ -368,12 +368,12 @@ export const usePeerChat = () => {
       setState(prev => {
         // Update if exists (reconnect) or add new
         const existingIndex = prev.users.findIndex(u => u.id === newUser.id);
-        let newUsers;
+        let newUsers: User[];
         if (existingIndex >= 0) {
             newUsers = [...prev.users];
-            newUsers[existingIndex] = { ...newUser, status: 'online' }; // Force online on reconnect
+            newUsers[existingIndex] = { ...newUser, status: 'online' } as User; // Force online on reconnect
         } else {
-            newUsers = [...prev.users, { ...newUser, status: 'online' }];
+            newUsers = [...prev.users, { ...newUser, status: 'online' } as User];
         }
         
         broadcast({ type: 'user_list_update', payload: newUsers });
@@ -432,12 +432,6 @@ export const usePeerChat = () => {
 
   const handleUserDisconnect = (userId: string, userName: string) => {
     setState(prev => {
-       // Don't remove immediately? No, standard P2P chat removes on disconnect.
-       // We can keep them but mark as offline?
-       // Let's remove to keep list clean, or maybe user wants persistence?
-       // For "temporary chat" requirement, removing is standard, but showing "Offline" is better.
-       // However, to fix "User Left" bugs, removal is safer for logic.
-       // Let's remove.
        const newUsers = prev.users.filter(u => u.id !== userId);
        
        const remainingConns = connectionsRef.current.filter(c => c.open);
