@@ -14,8 +14,8 @@ interface ChatScreenProps {
 }
 
 // Utility to compress image to prevent P2P data choke
-// Adjusted to 600px and 0.6 quality to ensure high deliverability over P2P
-const compressImage = (base64: string, maxWidth = 600, quality = 0.6): Promise<string> => {
+// Adjusted to 500px and 0.5 quality to ensure high deliverability over P2P
+const compressImage = (base64: string, maxWidth = 500, quality = 0.5): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64;
@@ -43,30 +43,30 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const { state, currentUser, isAiThinking, sendMessage, setTyping, kickUser, toggleMuteUser } = chat;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  
+
   const [inputValue, setInputValue] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  
+
   // Scroll & Notification State
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasUnreadMention, setHasUnreadMention] = useState(false);
   const prevMessagesLengthRef = useRef(0);
-  
+
   // Mentions State
   const [mentionSearch, setMentionSearch] = useState<string | null>(null);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<any>(null);
   const lastTypingSentRef = useRef<number>(0);
 
   // --- Scroll Logic ---
-  
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     setUnreadCount(0);
@@ -101,10 +101,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         if (isMention) setHasUnreadMention(true);
       }
     }
-    
+
     // Update ref for next run
     prevMessagesLengthRef.current = state.messages.length;
-    
+
   }, [state.messages, currentUser, isAtBottom]);
 
   // --- Search & Typing ---
@@ -115,7 +115,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       return;
     }
     const search = mentionSearch.toLowerCase();
-    const matches = state.users.filter(u => 
+    const matches = state.users.filter(u =>
       u.name.toLowerCase().includes(search) && u.id !== currentUser?.id
     );
     setFilteredUsers(matches);
@@ -128,7 +128,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
     setInputValue('');
     setShowEmoji(false);
     setMentionSearch(null);
-    
+
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     setTyping(false);
     lastTypingSentRef.current = 0;
@@ -137,10 +137,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setInputValue(value);
-    
+
     const words = value.split(' ');
     const lastWord = words[words.length - 1];
-    
+
     if (lastWord && lastWord.startsWith('@')) {
       setMentionSearch(lastWord.substring(1));
     } else {
@@ -152,9 +152,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
       setTyping(true);
       lastTypingSentRef.current = now;
     }
-    
+
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    
+
     typingTimeoutRef.current = setTimeout(() => {
       setTyping(false);
       lastTypingSentRef.current = 0;
@@ -165,11 +165,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
   // --- Paste Handler (Images) ---
   const handlePaste = async (e: React.ClipboardEvent) => {
     if (currentUser?.isMuted) return;
-    
+
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
-        e.preventDefault(); 
+        e.preventDefault();
         const blob = items[i].getAsFile();
         if (blob) {
           const reader = new FileReader();
@@ -181,7 +181,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
           };
           reader.readAsDataURL(blob);
         }
-        return; 
+        return;
       }
     }
   };
@@ -237,19 +237,19 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
   return (
     <div className="flex h-[100dvh] bg-[#0f172a] overflow-hidden">
-      
+
       {/* Lightbox Overlay */}
       {selectedImage && (
-        <div 
+        <div
           className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4 animate-fade-in backdrop-blur-sm"
           onClick={() => setSelectedImage(null)}
         >
           <button className="absolute top-4 right-4 text-white/70 hover:text-white p-2 rounded-full hover:bg-white/10 transition-colors">
             <X size={32} />
           </button>
-          <img 
-            src={selectedImage} 
-            alt="Full screen" 
+          <img
+            src={selectedImage}
+            alt="Full screen"
             className="max-w-full max-h-[90dvh] object-contain rounded-lg shadow-2xl"
           />
         </div>
@@ -257,7 +257,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
       {/* Mobile Sidebar Overlay */}
       {showSidebar && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/60 z-[60] md:hidden backdrop-blur-sm transition-opacity"
           onClick={() => setShowSidebar(false)}
         />
@@ -279,7 +279,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          
+
           {/* Room ID Card */}
           <div className="bg-slate-800/50 p-4 rounded-xl border border-white/5">
             <p className="text-xs text-slate-400 mb-2 uppercase tracking-wider font-semibold">Invite Friends</p>
@@ -287,9 +287,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               <QRCodeSVG value={`${window.location.origin}${window.location.pathname}#${state.roomId}`} size={120} />
             </div>
             <div className="flex gap-2 mb-2">
-              <input 
-                readOnly 
-                value={state.roomId || ''} 
+              <input
+                readOnly
+                value={state.roomId || ''}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono"
               />
               <Button variant="secondary" size="sm" onClick={copyRoomLink}>
@@ -300,56 +300,55 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
           {/* User List */}
           <div>
-             <p className="text-xs text-slate-400 mb-3 uppercase tracking-wider font-semibold">
-               Online ({state.users.length})
-             </p>
-             <div className="space-y-2">
-               {state.users.map(user => (
-                 <div key={user.id} className="group flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg transition-colors relative">
-                   <div className="relative">
-                    <div 
+            <p className="text-xs text-slate-400 mb-3 uppercase tracking-wider font-semibold">
+              Online ({state.users.length})
+            </p>
+            <div className="space-y-2">
+              {state.users.map(user => (
+                <div key={user.id} className="group flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg transition-colors relative">
+                  <div className="relative">
+                    <div
                       className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg shrink-0"
                       style={{ backgroundColor: user.color }}
                     >
-                      {user.name.substring(0,2).toUpperCase()}
+                      {user.name.substring(0, 2).toUpperCase()}
                     </div>
                     {/* Status Dot */}
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900 ${
-                      user.status === 'away' ? 'bg-yellow-500' : 'bg-emerald-500'
-                    }`} title={user.status || 'online'}></div>
-                   </div>
+                    <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900 ${user.status === 'away' ? 'bg-yellow-500' : 'bg-emerald-500'
+                      }`} title={user.status || 'online'}></div>
+                  </div>
 
-                   <div className="flex-1 min-w-0">
-                     <p className="text-sm font-medium text-slate-200 truncate flex items-center gap-1">
-                       {user.name} 
-                       {user.id === currentUser?.id && <span className="text-slate-500 ml-1">(You)</span>}
-                       {user.isMuted && <MicOff size={12} className="text-red-400" />}
-                     </p>
-                     {user.isHost && <p className="text-[10px] text-indigo-400">HOST</p>}
-                   </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-200 truncate flex items-center gap-1">
+                      {user.name}
+                      {user.id === currentUser?.id && <span className="text-slate-500 ml-1">(You)</span>}
+                      {user.isMuted && <MicOff size={12} className="text-red-400" />}
+                    </p>
+                    {user.isHost && <p className="text-[10px] text-indigo-400">HOST</p>}
+                  </div>
 
-                   {/* Admin Controls */}
-                   {currentUser?.isHost && !user.isHost && user.id !== 'ai-bot' && (
-                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                       <button 
+                  {/* Admin Controls */}
+                  {currentUser?.isHost && !user.isHost && user.id !== 'ai-bot' && (
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
                         onClick={() => toggleMuteUser(user.id)}
                         className={`p-1 rounded hover:bg-white/10 ${user.isMuted ? 'text-red-400' : 'text-slate-400'}`}
                         title={user.isMuted ? "Unmute" : "Mute"}
-                       >
-                         {user.isMuted ? <MicOff size={14}/> : <Mic size={14}/>}
-                       </button>
-                       <button 
+                      >
+                        {user.isMuted ? <MicOff size={14} /> : <Mic size={14} />}
+                      </button>
+                      <button
                         onClick={() => kickUser(user.id)}
                         className="p-1 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400"
                         title="Kick User"
-                       >
-                         <Ban size={14}/>
-                       </button>
-                     </div>
-                   )}
-                 </div>
-               ))}
-             </div>
+                      >
+                        <Ban size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -366,7 +365,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
         {/* Header */}
         <header className="h-14 md:h-16 shrink-0 border-b border-white/5 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-4 sticky top-0 z-30 shadow-sm">
           <div className="flex items-center gap-3">
-            <button 
+            <button
               className="md:hidden p-2 text-slate-300 hover:bg-white/5 rounded-lg active:scale-95 transition-transform"
               onClick={() => setShowSidebar(true)}
             >
@@ -379,42 +378,42 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
               </h3>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
-            <Button 
-              variant="secondary" 
-              size="sm" 
+            <Button
+              variant="secondary"
+              size="sm"
               className={`hidden sm:flex items-center gap-2 border-indigo-500/30 ${copied ? 'bg-indigo-500/20 text-indigo-300' : ''}`}
               onClick={copyRoomLink}
             >
               {copied ? <Check size={16} /> : <Share2 size={16} />}
               {copied ? 'Copied!' : 'Share Link'}
             </Button>
-            
+
             <button onClick={copyRoomLink} className="sm:hidden p-2 text-indigo-400 hover:bg-indigo-500/10 rounded-full active:scale-95 transition-transform">
-               {copied ? <Check size={20} /> : <LinkIcon size={20} />}
+              {copied ? <Check size={20} /> : <LinkIcon size={20} />}
             </button>
           </div>
         </header>
 
         {/* Messages */}
-        <div 
+        <div
           ref={messagesContainerRef}
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth overscroll-contain overflow-anchor-auto"
         >
           {state.messages.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none p-4 text-center">
-               <MessageSquare size={48} className="mb-2" />
-               <p>No messages yet.</p>
-               <p className="text-xs mt-2">Invited friends? Messages are encrypted P2P.</p>
+              <MessageSquare size={48} className="mb-2" />
+              <p>No messages yet.</p>
+              <p className="text-xs mt-2">Invited friends? Messages are encrypted P2P.</p>
             </div>
           )}
           {state.messages.map((msg) => (
-            <MessageBubble 
-              key={msg.id} 
-              message={msg} 
-              isSelf={msg.senderId === currentUser?.id} 
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              isSelf={msg.senderId === currentUser?.id}
               isMentioned={isMessageMentioningMe(msg)}
               onImageClick={(src) => setSelectedImage(src)}
             />
@@ -424,19 +423,18 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
         {/* Input Area */}
         <div className="p-2 md:p-4 bg-slate-900 border-t border-white/5 relative shrink-0 z-20 pb-[env(safe-area-inset-bottom)]">
-          
+
           {/* FLOATING AREA: Notifications & Typing Indicators */}
           <div className="absolute bottom-full left-0 w-full px-4 pb-2 pointer-events-none flex flex-col items-center gap-2">
-            
+
             {/* 1. New Message / Scroll Button */}
             {!isAtBottom && unreadCount > 0 && (
-              <button 
+              <button
                 onClick={scrollToBottom}
-                className={`pointer-events-auto shadow-xl px-4 py-2 rounded-full text-sm font-medium transition-all animate-slide-up flex items-center gap-2 ${
-                  hasUnreadMention 
-                    ? 'bg-yellow-500 text-slate-900 hover:bg-yellow-400' 
+                className={`pointer-events-auto shadow-xl px-4 py-2 rounded-full text-sm font-medium transition-all animate-slide-up flex items-center gap-2 ${hasUnreadMention
+                    ? 'bg-yellow-500 text-slate-900 hover:bg-yellow-400'
                     : 'bg-indigo-600 text-white hover:bg-indigo-500'
-                }`}
+                  }`}
               >
                 <ArrowDown size={16} />
                 {hasUnreadMention ? 'You were mentioned!' : `${unreadCount} New Messages`}
@@ -445,56 +443,56 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
 
             {/* 2. Typing Indicators (Users & AI) */}
             {(activeTypers.length > 0 || isAiThinking) && (
-               <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up mb-1">
-                 {isAiThinking && (
-                   <div className="flex items-center gap-2 text-emerald-400 border-r border-white/10 pr-3 mr-1">
-                      <Sparkles size={14} className="animate-pulse" />
-                      <span className="text-xs font-medium">Nexus AI is thinking...</span>
-                   </div>
-                 )}
-                 {activeTypers.length > 0 && (
-                   <div className="flex items-center gap-2 text-indigo-300">
-                     <div className="flex gap-1">
-                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></span>
-                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
-                       <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
-                     </div>
-                     <span className="text-xs max-w-[150px] truncate">
-                       {activeTypers.join(', ')} typing...
-                     </span>
-                   </div>
-                 )}
-               </div>
+              <div className="pointer-events-auto bg-slate-800/90 backdrop-blur border border-white/10 px-4 py-2 rounded-2xl shadow-lg flex items-center gap-3 animate-slide-up mb-1">
+                {isAiThinking && (
+                  <div className="flex items-center gap-2 text-emerald-400 border-r border-white/10 pr-3 mr-1">
+                    <Sparkles size={14} className="animate-pulse" />
+                    <span className="text-xs font-medium">Nexus AI is thinking...</span>
+                  </div>
+                )}
+                {activeTypers.length > 0 && (
+                  <div className="flex items-center gap-2 text-indigo-300">
+                    <div className="flex gap-1">
+                      <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></span>
+                      <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-100"></span>
+                      <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce delay-200"></span>
+                    </div>
+                    <span className="text-xs max-w-[150px] truncate">
+                      {activeTypers.join(', ')} typing...
+                    </span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
           {/* Mention Popup */}
           {mentionSearch !== null && filteredUsers.length > 0 && (
-             <div className="absolute bottom-full left-4 mb-2 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden min-w-[200px] z-50 animate-slide-up">
-                <div className="px-3 py-2 bg-slate-900/50 border-b border-slate-700 text-xs text-slate-400 font-semibold">
-                  Mention user
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                   {filteredUsers.map(u => (
-                     <button
-                       key={u.id}
-                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-600/20 text-left transition-colors border-b border-white/5 last:border-0"
-                       onClick={() => handleMentionSelect(u.name)}
-                     >
-                       <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: u.color || '#10b981' }}>
-                         {u.name.substring(0,2).toUpperCase()}
-                       </div>
-                       <span className="text-sm text-slate-200 font-medium truncate">{u.name}</span>
-                     </button>
-                   ))}
-                </div>
-             </div>
+            <div className="absolute bottom-full left-4 mb-2 bg-slate-800 border border-slate-700 rounded-xl shadow-xl overflow-hidden min-w-[200px] z-50 animate-slide-up">
+              <div className="px-3 py-2 bg-slate-900/50 border-b border-slate-700 text-xs text-slate-400 font-semibold">
+                Mention user
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {filteredUsers.map(u => (
+                  <button
+                    key={u.id}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-indigo-600/20 text-left transition-colors border-b border-white/5 last:border-0"
+                    onClick={() => handleMentionSelect(u.name)}
+                  >
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-sm shrink-0" style={{ backgroundColor: u.color || '#10b981' }}>
+                      {u.name.substring(0, 2).toUpperCase()}
+                    </div>
+                    <span className="text-sm text-slate-200 font-medium truncate">{u.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="max-w-4xl mx-auto flex items-end gap-2 bg-slate-800/80 p-1.5 md:p-2 rounded-2xl border border-white/10 relative shadow-sm">
-            
+
             <div className="flex items-center gap-0.5 md:gap-1">
-              <button 
+              <button
                 className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
                 onClick={() => setShowEmoji(!showEmoji)}
                 disabled={!!currentUser?.isMuted}
@@ -502,7 +500,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 <Smile size={20} className="md:w-6 md:h-6" />
               </button>
 
-              <button 
+              <button
                 className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
                 onClick={handleAtButtonClick}
                 title="Mention someone"
@@ -511,7 +509,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 <AtSign size={20} className="md:w-6 md:h-6" />
               </button>
 
-              <button 
+              <button
                 className="p-2 md:p-3 text-slate-400 hover:text-indigo-400 hover:bg-white/5 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!!currentUser?.isMuted}
@@ -519,25 +517,25 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 <ImageIcon size={20} className="md:w-6 md:h-6" />
               </button>
             </div>
-            
+
             {showEmoji && (
-               <div className="absolute bottom-full left-0 mb-2 z-50 animate-slide-up shadow-2xl rounded-2xl overflow-hidden">
-                 <EmojiPicker 
-                   theme={Theme.DARK} 
-                   onEmojiClick={onEmojiClick} 
-                   lazyLoadEmojis={true}
-                   width={300}
-                   height={400}
-                   searchDisabled={false}
-                 />
-               </div>
+              <div className="absolute bottom-full left-0 mb-2 z-50 animate-slide-up shadow-2xl rounded-2xl overflow-hidden">
+                <EmojiPicker
+                  theme={Theme.DARK}
+                  onEmojiClick={onEmojiClick}
+                  lazyLoadEmojis={true}
+                  width={300}
+                  height={400}
+                  searchDisabled={false}
+                />
+              </div>
             )}
 
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*" 
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              accept="image/*"
               onChange={handleFileUpload}
             />
 
@@ -554,9 +552,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ chat, onLeave }) => {
                 disabled={!!currentUser?.isMuted}
                 autoComplete="off"
               />
-              <Button 
-                type="submit" 
-                variant="primary" 
+              <Button
+                type="submit"
+                variant="primary"
                 className="rounded-xl px-3 md:px-4 active:scale-95 transition-transform"
                 disabled={!inputValue.trim() || !!currentUser?.isMuted}
               >

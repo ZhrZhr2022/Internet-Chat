@@ -25,7 +25,7 @@ const PEER_CONFIG = {
     iceCandidatePoolSize: 10,
     sdpSemantics: 'unified-plan'
   },
-  pingInterval: 2000, 
+  pingInterval: 2000,
   debug: 1 // Errors only
 };
 
@@ -38,18 +38,18 @@ export const usePeerChat = () => {
     error: null,
     typingUsers: [],
   });
-  
+
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAiThinking, setIsAiThinking] = useState(false);
 
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<DataConnection[]>([]); // Host keeps track of all guests
   const hostConnectionRef = useRef<DataConnection | null>(null); // Guest keeps track of host
-  
+
   const messageIdsRef = useRef<Set<string>>(new Set());
   // NEW: Keep track of messages in ref for sync access without closure staleness
   const messagesRef = useRef<Message[]>([]);
-  
+
   const heartbeatTimerRef = useRef<any>(null);
   const connectionTimeoutRef = useRef<any>(null);
   const retryCountRef = useRef(0);
@@ -88,14 +88,14 @@ export const usePeerChat = () => {
       if (!currentUser || state.status !== 'connected') return;
 
       const newStatus = document.hidden ? 'away' : 'online';
-      
+
       const payload: PeerData = {
         type: 'status_update',
         payload: { userId: currentUser.id, status: newStatus }
       };
 
       if (currentUser.isHost) {
-        handleStatusUpdate(currentUser.id, newStatus); 
+        handleStatusUpdate(currentUser.id, newStatus);
       } else {
         sendToHost(payload);
       }
@@ -137,9 +137,9 @@ export const usePeerChat = () => {
 
     if (conn) {
       conn.send({ type: 'kick_notification', payload: 'You have been kicked by the host.' });
-      setTimeout(() => conn.close(), 500); 
+      setTimeout(() => conn.close(), 500);
     }
-    
+
     // Fallback
     const targetUser = state.users.find(u => u.id === targetUserId);
     if (targetUser) handleUserDisconnect(targetUserId, targetUser.name);
@@ -148,9 +148,9 @@ export const usePeerChat = () => {
 
   const toggleMuteUser = useCallback((targetUserId: string) => {
     if (!currentUser?.isHost) return;
-    
+
     setState(prev => {
-      const updatedUsers = prev.users.map(u => 
+      const updatedUsers = prev.users.map(u =>
         u.id === targetUserId ? { ...u, isMuted: !u.isMuted } as User : u
       );
       // Broadcast new state
@@ -172,7 +172,7 @@ export const usePeerChat = () => {
   }, []);
 
   const setTyping = useCallback((isTyping: boolean) => {
-    if (!currentUser || currentUser.isMuted) return; 
+    if (!currentUser || currentUser.isMuted) return;
     const payload: PeerData = {
       type: 'typing_status',
       payload: { name: currentUser.name, isTyping }
@@ -199,7 +199,7 @@ export const usePeerChat = () => {
 
     addMessage(newMessage);
     const payload: PeerData = { type: 'message', payload: newMessage };
-    
+
     if (currentUser.isHost) broadcast(payload);
     else sendToHost(payload);
 
@@ -231,21 +231,21 @@ export const usePeerChat = () => {
     heartbeatTimerRef.current = setInterval(() => {
       if (!peer || peer.destroyed) return;
       if (peer.disconnected && !peer.destroyed) peer.reconnect();
-    }, 2000); 
+    }, 2000);
   };
 
   const createRoom = (username: string) => {
     const userId = currentUser?.id || crypto.randomUUID();
-    const user: User = { 
-      id: userId, 
-      name: username, 
-      color: currentUser?.color || getRandomColor(), 
-      isHost: true, 
-      status: 'online', 
-      isMuted: false 
+    const user: User = {
+      id: userId,
+      name: username,
+      color: currentUser?.color || getRandomColor(),
+      isHost: true,
+      status: 'online',
+      isMuted: false
     };
     const aiUser: User = { id: 'ai-bot', name: 'Nexus AI', color: '#10b981', isHost: false, status: 'online' };
-    
+
     setCurrentUser(user);
     saveProfile(user);
     messageIdsRef.current.clear();
@@ -269,22 +269,22 @@ export const usePeerChat = () => {
     });
 
     peer.on('error', (err: any) => {
-       console.error("Peer Error", err);
-       setState(prev => ({ ...prev, status: 'error', error: `Host Error: ${err.type}` }));
+      console.error("Peer Error", err);
+      setState(prev => ({ ...prev, status: 'error', error: `Host Error: ${err.type}` }));
     });
   };
 
   const joinRoom = (roomId: string, username: string) => {
     const userId = currentUser?.id || crypto.randomUUID();
-    const user: User = { 
-      id: userId, 
-      name: username, 
-      color: currentUser?.color || getRandomColor(), 
-      isHost: false, 
-      status: 'online', 
-      isMuted: false 
+    const user: User = {
+      id: userId,
+      name: username,
+      color: currentUser?.color || getRandomColor(),
+      isHost: false,
+      status: 'online',
+      isMuted: false
     };
-    
+
     setCurrentUser(user);
     saveProfile(user);
     messageIdsRef.current.clear();
@@ -306,25 +306,25 @@ export const usePeerChat = () => {
 
       conn.on('open', () => {
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
-        retryCountRef.current = 0; 
+        retryCountRef.current = 0;
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
         conn.send({ type: 'handshake', payload: user });
         startHeartbeat(peer);
       });
 
       conn.on('data', (data: any) => handleGuestData(data as PeerData));
-      
+
       conn.on('close', () => {
         if (state.status !== 'kicked') {
-            setState(prev => ({ ...prev, status: 'error', error: 'Host disconnected.' }));
+          setState(prev => ({ ...prev, status: 'error', error: 'Host disconnected.' }));
         }
       });
-      
+
       conn.on('error', (e) => console.error("Conn Error", e));
     };
 
     peer.on('open', attemptConnection);
-    
+
     peer.on('error', (err: any) => {
       console.error('Peer error:', err);
       if (err.type === 'peer-unavailable' && retryCountRef.current < 3) {
@@ -332,12 +332,12 @@ export const usePeerChat = () => {
         console.log(`Retrying connection... Attempt ${retryCountRef.current}`);
         setTimeout(attemptConnection, 2000);
       } else {
-        setState(prev => ({ 
-          ...prev, 
-          status: 'error', 
-          error: err.type === 'peer-unavailable' 
-            ? 'Room ID not found. Host might be offline.' 
-            : `Connection Error: ${err.type}` 
+        setState(prev => ({
+          ...prev,
+          status: 'error',
+          error: err.type === 'peer-unavailable'
+            ? 'Room ID not found. Host might be offline.'
+            : `Connection Error: ${err.type}`
         }));
       }
     });
@@ -355,9 +355,9 @@ export const usePeerChat = () => {
 
   const handleStatusUpdate = (userId: string, status: 'online' | 'away') => {
     setState(prev => {
-        const newUsers = prev.users.map(u => u.id === userId ? { ...u, status } as User : u);
-        broadcast({ type: 'user_list_update', payload: newUsers });
-        return { ...prev, users: newUsers };
+      const newUsers = prev.users.map(u => u.id === userId ? { ...u, status } as User : u);
+      broadcast({ type: 'user_list_update', payload: newUsers });
+      return { ...prev, users: newUsers };
     });
   };
 
@@ -365,21 +365,21 @@ export const usePeerChat = () => {
     if (data.type === 'handshake') {
       const newUser = data.payload as User;
       connMapRef.current.set(senderConn.peer, newUser.id);
-      
+
       senderConn.on('close', () => handleUserDisconnect(newUser.id, newUser.name));
 
       setState(prev => {
         const existingIndex = prev.users.findIndex(u => u.id === newUser.id);
         let newUsers: User[];
         if (existingIndex >= 0) {
-            newUsers = [...prev.users];
-            newUsers[existingIndex] = { ...newUser, status: 'online' } as User; 
+          newUsers = [...prev.users];
+          newUsers[existingIndex] = { ...newUser, status: 'online' } as User;
         } else {
-            newUsers = [...prev.users, { ...newUser, status: 'online' } as User];
+          newUsers = [...prev.users, { ...newUser, status: 'online' } as User];
         }
-        
+
         broadcast({ type: 'user_list_update', payload: newUsers });
-        
+
         return { ...prev, users: newUsers };
       });
 
@@ -391,82 +391,86 @@ export const usePeerChat = () => {
         timestamp: Date.now(),
         type: MessageType.SYSTEM
       };
-      
+
       // Update local state
       addMessage(sysMsg);
       // Broadcast to others
       broadcast({ type: 'message', payload: sysMsg });
 
-      // CRITICAL FIX: Manually construct history payload including the new system message
-      // This ensures the new user sees the "Joined" message in history immediately
-      // without relying on React's async state update.
+      // CRITICAL FIX: Chunk history to prevent P2P data choke
+      // Split history into chunks of 20 messages
       const historyToSync = [...messagesRef.current, sysMsg];
+      const CHUNK_SIZE = 20;
 
-      // Send history to NEW user only with a slight delay to ensure connection readiness
       setTimeout(() => {
-         if (senderConn.open) {
-             senderConn.send({ type: 'history_sync', payload: historyToSync });
-         }
+        if (senderConn.open) {
+          for (let i = 0; i < historyToSync.length; i += CHUNK_SIZE) {
+            const chunk = historyToSync.slice(i, i + CHUNK_SIZE);
+            senderConn.send({ type: 'history_sync', payload: chunk });
+          }
+        }
       }, 800);
 
     } else if (data.type === 'message') {
       const msg = data.payload as Message;
       const sender = state.users.find(u => u.id === msg.senderId);
-      if (sender?.isMuted) return; 
+      if (sender?.isMuted) return;
 
-      addMessage(msg); 
+      addMessage(msg);
       // Important: Broadcast to everyone including the sender (sender ignores duplicate ID)
       broadcast(data);
 
       if (msg.type === MessageType.TEXT && (msg.content.toLowerCase().includes('@nexus') || msg.content.toLowerCase().includes('@ai'))) {
-         setIsAiThinking(true);
-         const currentMessages = [...messagesRef.current, msg];
-         try {
-             const responseText = await generateAIResponse(msg.content, currentMessages);
-             const aiMessage: Message = {
-                id: crypto.randomUUID(),
-                senderId: 'ai-bot',
-                senderName: 'Nexus AI',
-                content: responseText,
-                timestamp: Date.now(),
-                type: MessageType.AI
-              };
-              addMessage(aiMessage);
-              broadcast({ type: 'message', payload: aiMessage });
-         } finally {
-             setIsAiThinking(false);
-         }
-       }
+        setIsAiThinking(true);
+        const currentMessages = [...messagesRef.current, msg];
+        try {
+          const responseText = await generateAIResponse(msg.content, currentMessages);
+          const aiMessage: Message = {
+            id: crypto.randomUUID(),
+            senderId: 'ai-bot',
+            senderName: 'Nexus AI',
+            content: responseText,
+            timestamp: Date.now(),
+            type: MessageType.AI
+          };
+          addMessage(aiMessage);
+          broadcast({ type: 'message', payload: aiMessage });
+        } finally {
+          setIsAiThinking(false);
+        }
+      }
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
       broadcast(data);
     } else if (data.type === 'status_update') {
-        const { userId, status } = data.payload;
-        handleStatusUpdate(userId, status);
+      const { userId, status } = data.payload;
+      handleStatusUpdate(userId, status);
     }
   };
 
   const handleUserDisconnect = (userId: string, userName: string) => {
     setState(prev => {
-       const newUsers = prev.users.filter(u => u.id !== userId);
-       
-       const remainingConns = connectionsRef.current.filter(c => c.open);
-       const remainingUsers = newUsers;
-       const listUpdate: PeerData = { type: 'user_list_update', payload: remainingUsers };
-       
-       remainingConns.forEach(conn => conn.send(listUpdate));
-       
-       return { ...prev, users: newUsers };
+      const newUsers = prev.users.filter(u => u.id !== userId);
+
+      // Cleanup closed connections
+      connectionsRef.current = connectionsRef.current.filter(c => c.open);
+
+      const remainingConns = connectionsRef.current;
+      const listUpdate: PeerData = { type: 'user_list_update', payload: newUsers };
+
+      remainingConns.forEach(conn => conn.send(listUpdate));
+
+      return { ...prev, users: newUsers };
     });
 
     const sysMsg: Message = {
-        id: crypto.randomUUID(),
-        senderId: 'system',
-        senderName: 'System',
-        content: `${userName} left the room.`,
-        timestamp: Date.now(),
-        type: MessageType.SYSTEM
+      id: crypto.randomUUID(),
+      senderId: 'system',
+      senderName: 'System',
+      content: `${userName} left the room.`,
+      timestamp: Date.now(),
+      type: MessageType.SYSTEM
     };
     addMessage(sysMsg);
     broadcast({ type: 'message', payload: sysMsg });
@@ -477,9 +481,9 @@ export const usePeerChat = () => {
       updateUsers(data.payload);
       const myUser = (data.payload as User[]).find(u => u.id === currentUser?.id);
       if (myUser && currentUser) {
-          if (myUser.isMuted !== currentUser.isMuted) {
-             setCurrentUser(prev => prev ? ({ ...prev, isMuted: myUser.isMuted }) : null);
-          }
+        if (myUser.isMuted !== currentUser.isMuted) {
+          setCurrentUser(prev => prev ? ({ ...prev, isMuted: myUser.isMuted }) : null);
+        }
       }
 
     } else if (data.type === 'message') {
@@ -492,24 +496,24 @@ export const usePeerChat = () => {
       const historyIds = new Set(history.map(m => m.id));
 
       setState(prev => {
-         // Merge logic: Keep messages that we received locally which are NOT in history yet
-         // This protects against the case where a "Joined" message arrives before history sync
-         const localMessages = prev.messages.filter(m => !historyIds.has(m.id));
-         const merged = [...history, ...localMessages].sort((a,b) => a.timestamp - b.timestamp);
-         
-         // Update ID tracker
-         merged.forEach(m => messageIdsRef.current.add(m.id));
-         messagesRef.current = merged; 
-         
-         return { ...prev, messages: merged };
+        // Merge logic: Keep messages that we received locally which are NOT in history yet
+        // This protects against the case where a "Joined" message arrives before history sync
+        const localMessages = prev.messages.filter(m => !historyIds.has(m.id));
+        const merged = [...history, ...localMessages].sort((a, b) => a.timestamp - b.timestamp);
+
+        // Update ID tracker
+        merged.forEach(m => messageIdsRef.current.add(m.id));
+        messagesRef.current = merged;
+
+        return { ...prev, messages: merged };
       });
-      
+
     } else if (data.type === 'typing_status') {
       const { name, isTyping } = data.payload;
       handleTypingUpdate(name, isTyping);
     } else if (data.type === 'kick_notification') {
-        setState(prev => ({ ...prev, status: 'kicked', error: data.payload }));
-        if (hostConnectionRef.current) hostConnectionRef.current.close();
+      setState(prev => ({ ...prev, status: 'kicked', error: data.payload }));
+      if (hostConnectionRef.current) hostConnectionRef.current.close();
     }
   };
 
