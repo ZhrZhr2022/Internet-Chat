@@ -1,7 +1,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Peer, { DataConnection } from 'peerjs';
-import { User, Message, ChatState, MessageType, PeerData } from '../types';
+import { User, Message, ChatState, MessageType, PeerData, ChunkPayload } from '../types';
 import { generateAIResponse } from '../services/gemini';
 
 // Helper to generate random colors
@@ -49,6 +49,7 @@ export const usePeerChat = () => {
   const messageIdsRef = useRef<Set<string>>(new Set());
   // NEW: Keep track of messages in ref for sync access without closure staleness
   const messagesRef = useRef<Message[]>([]);
+  const chunksRef = useRef<Map<string, { total: number, received: number, parts: string[] }>>(new Map());
 
   const heartbeatTimerRef = useRef<any>(null);
   const connectionTimeoutRef = useRef<any>(null);
@@ -107,6 +108,58 @@ export const usePeerChat = () => {
 
   // --- Actions ---
 
+  const sendData = useCallback((conn: DataConnection, data: PeerData) => {
+    const json = JSON.stringify(data);
+    const size = new Blob([json]).size;
+    const CHUNK_SIZE = 16 * 1024; // 16KB safe limit
+
+    if (size <= CHUNK_SIZE) {
+      conn.send(data);
+    } else {
+      const id = crypto.randomUUID();
+      const total = Math.ceil(json.length / CHUNK_SIZE);
+
+      for (let i = 0; i < total; i++) {
+        const chunk = json.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const payload: ChunkPayload = {
+          id,
+          index: i,
+          total,
+          data: chunk
+        };
+        conn.send({ type: 'chunk', payload });
+      }
+    }
+  }, []);
+
+  const handleIncomingData = useCallback((data: PeerData, onComplete: (data: PeerData) => void) => {
+    if (data.type === 'chunk') {
+      const chunk = data.payload as ChunkPayload;
+      const { id, index, total, data: chunkData } = chunk;
+
+      if (!chunksRef.current.has(id)) {
+        chunksRef.current.set(id, { total, received: 0, parts: new Array(total) });
+      }
+
+      const transfer = chunksRef.current.get(id)!;
+      transfer.parts[index] = chunkData;
+      transfer.received++;
+
+      if (transfer.received === total) {
+        const fullJson = transfer.parts.join('');
+        chunksRef.current.delete(id);
+        try {
+          const parsed = JSON.parse(fullJson);
+          onComplete(parsed);
+        } catch (e) {
+          console.error("Failed to parse chunked message", e);
+        }
+      }
+    } else {
+      onComplete(data);
+    }
+  }, []);
+
   const addMessage = useCallback((msg: Message) => {
     if (messageIdsRef.current.has(msg.id)) return;
     messageIdsRef.current.add(msg.id);
@@ -136,7 +189,7 @@ export const usePeerChat = () => {
     });
 
     if (conn) {
-      conn.send({ type: 'kick_notification', payload: 'You have been kicked by the host.' });
+      sendData(conn, { type: 'kick_notification', payload: 'You have been kicked by the host.' });
       setTimeout(() => conn.close(), 500);
     }
 
@@ -161,15 +214,15 @@ export const usePeerChat = () => {
 
   const broadcast = useCallback((data: PeerData) => {
     connectionsRef.current.forEach(conn => {
-      if (conn.open) conn.send(data);
+      if (conn.open) sendData(conn, data);
     });
-  }, []);
+  }, [sendData]);
 
   const sendToHost = useCallback((data: PeerData) => {
     if (hostConnectionRef.current?.open) {
-      hostConnectionRef.current.send(data);
+      sendData(hostConnectionRef.current, data);
     }
-  }, []);
+  }, [sendData]);
 
   const setTyping = useCallback((isTyping: boolean) => {
     if (!currentUser || currentUser.isMuted) return;
@@ -263,7 +316,7 @@ export const usePeerChat = () => {
 
     peer.on('connection', (conn) => {
       connectionsRef.current.push(conn);
-      conn.on('data', (data: any) => handleHostData(data as PeerData, conn));
+      conn.on('data', (data: any) => handleIncomingData(data as PeerData, (completeData: PeerData) => handleHostData(completeData, conn)));
       conn.on('close', () => { /* Handled via map */ });
       conn.on('error', (err) => console.error("Connection error:", err));
     });
@@ -308,11 +361,11 @@ export const usePeerChat = () => {
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         retryCountRef.current = 0;
         setState(prev => ({ ...prev, roomId, status: 'connected' }));
-        conn.send({ type: 'handshake', payload: user });
+        sendData(conn, { type: 'handshake', payload: user });
         startHeartbeat(peer);
       });
 
-      conn.on('data', (data: any) => handleGuestData(data as PeerData));
+      conn.on('data', (data: any) => handleIncomingData(data as PeerData, (completeData: PeerData) => handleGuestData(completeData)));
 
       conn.on('close', () => {
         if (state.status !== 'kicked') {
@@ -406,7 +459,7 @@ export const usePeerChat = () => {
         if (senderConn.open) {
           for (let i = 0; i < historyToSync.length; i += CHUNK_SIZE) {
             const chunk = historyToSync.slice(i, i + CHUNK_SIZE);
-            senderConn.send({ type: 'history_sync', payload: chunk });
+            sendData(senderConn, { type: 'history_sync', payload: chunk });
           }
         }
       }, 800);
@@ -459,7 +512,7 @@ export const usePeerChat = () => {
       const remainingConns = connectionsRef.current;
       const listUpdate: PeerData = { type: 'user_list_update', payload: newUsers };
 
-      remainingConns.forEach(conn => conn.send(listUpdate));
+      remainingConns.forEach(conn => sendData(conn, listUpdate));
 
       return { ...prev, users: newUsers };
     });

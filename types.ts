@@ -34,7 +34,14 @@ export interface ChatState {
   typingUsers: string[]; // List of names currently typing
 }
 
+export interface ChunkPayload {
+  id: string;
+  index: number;
+  total: number;
+  data: string;
+}
+
 export interface PeerData {
-  type: 'handshake' | 'message' | 'user_list_update' | 'typing_status' | 'history_sync' | 'status_update' | 'kick_notification';
-  payload: any;
+  type: 'handshake' | 'message' | 'user_list_update' | 'typing_status' | 'history_sync' | 'status_update' | 'kick_notification' | 'chunk';
+  payload: any | ChunkPayload;
 }
