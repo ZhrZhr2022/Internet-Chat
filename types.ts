@@ -42,6 +42,6 @@ export interface ChunkPayload {
 }
 
 export interface PeerData {
-  type: 'handshake' | 'message' | 'user_list_update' | 'typing_status' | 'history_sync' | 'status_update' | 'kick_notification' | 'chunk';
+  type: 'handshake' | 'message' | 'user_list_update' | 'typing_status' | 'history_sync' | 'status_update' | 'kick_notification' | 'chunk' | 'image-header';
   payload: any | ChunkPayload;
 }

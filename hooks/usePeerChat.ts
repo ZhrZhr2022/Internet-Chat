@@ -50,6 +50,7 @@ export const usePeerChat = () => {
   // NEW: Keep track of messages in ref for sync access without closure staleness
   const messagesRef = useRef<Message[]>([]);
   const chunksRef = useRef<Map<string, { total: number, received: number, parts: string[] }>>(new Map());
+  const pendingImageRef = useRef<{ metadata: Message, senderId: string } | null>(null);
 
   const heartbeatTimerRef = useRef<any>(null);
   const connectionTimeoutRef = useRef<any>(null);
@@ -108,7 +109,12 @@ export const usePeerChat = () => {
 
   // --- Actions ---
 
-  const sendData = useCallback((conn: DataConnection, data: PeerData) => {
+  const sendData = useCallback((conn: DataConnection, data: PeerData | ArrayBuffer) => {
+    if (data instanceof ArrayBuffer) {
+      conn.send(data);
+      return;
+    }
+
     const json = JSON.stringify(data);
     const size = new Blob([json]).size;
     const CHUNK_SIZE = 16 * 1024; // 16KB safe limit
@@ -132,9 +138,27 @@ export const usePeerChat = () => {
     }
   }, []);
 
-  const handleIncomingData = useCallback((data: PeerData, onComplete: (data: PeerData) => void) => {
-    if (data.type === 'chunk') {
-      const chunk = data.payload as ChunkPayload;
+  const handleIncomingData = useCallback((data: any, onComplete: (data: PeerData) => void) => {
+    if (data instanceof ArrayBuffer) {
+      if (pendingImageRef.current) {
+        const blob = new Blob([data]);
+        const url = URL.createObjectURL(blob);
+        const msg = { ...pendingImageRef.current.metadata, content: url };
+        onComplete({ type: 'message', payload: msg });
+        pendingImageRef.current = null;
+      }
+      return;
+    }
+
+    const peerData = data as PeerData;
+
+    if (peerData.type === 'image-header') {
+      pendingImageRef.current = { metadata: peerData.payload, senderId: peerData.payload.senderId };
+      return;
+    }
+
+    if (peerData.type === 'chunk') {
+      const chunk = peerData.payload as ChunkPayload;
       const { id, index, total, data: chunkData } = chunk;
 
       if (!chunksRef.current.has(id)) {
@@ -156,7 +180,7 @@ export const usePeerChat = () => {
         }
       }
     } else {
-      onComplete(data);
+      onComplete(peerData);
     }
   }, []);
 
@@ -212,13 +236,13 @@ export const usePeerChat = () => {
     });
   }, [currentUser]);
 
-  const broadcast = useCallback((data: PeerData) => {
+  const broadcast = useCallback((data: PeerData | ArrayBuffer) => {
     connectionsRef.current.forEach(conn => {
       if (conn.open) sendData(conn, data);
     });
   }, [sendData]);
 
-  const sendToHost = useCallback((data: PeerData) => {
+  const sendToHost = useCallback((data: PeerData | ArrayBuffer) => {
     if (hostConnectionRef.current?.open) {
       sendData(hostConnectionRef.current, data);
     }
@@ -234,29 +258,57 @@ export const usePeerChat = () => {
     else sendToHost(payload);
   }, [currentUser, broadcast, sendToHost]);
 
-  const sendMessage = async (content: string, type: MessageType = MessageType.TEXT) => {
+  const sendMessage = async (content: string | File, type: MessageType = MessageType.TEXT) => {
     if (!currentUser) return;
     if (currentUser.isMuted) {
       alert("You have been muted by the host.");
       return;
     }
 
+    const messageId = crypto.randomUUID();
+    let msgContent = '';
+    let arrayBuffer: ArrayBuffer | null = null;
+
+    if (content instanceof File) {
+      msgContent = URL.createObjectURL(content); // Local preview
+      arrayBuffer = await content.arrayBuffer();
+    } else {
+      msgContent = content;
+    }
+
     const newMessage: Message = {
-      id: crypto.randomUUID(),
+      id: messageId,
       senderId: currentUser.id,
       senderName: currentUser.name,
-      content,
+      content: msgContent,
       timestamp: Date.now(),
       type
     };
 
     addMessage(newMessage);
-    const payload: PeerData = { type: 'message', payload: newMessage };
 
-    if (currentUser.isHost) broadcast(payload);
-    else sendToHost(payload);
+    if (content instanceof File && arrayBuffer) {
+      // Send Header
+      const header: PeerData = {
+        type: 'image-header',
+        payload: { ...newMessage, content: '' } // Send empty content in header
+      };
 
-    if (currentUser.isHost && type === MessageType.TEXT && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
+      if (currentUser.isHost) {
+        broadcast(header);
+        broadcast(arrayBuffer);
+      } else {
+        sendToHost(header);
+        sendToHost(arrayBuffer);
+      }
+    } else {
+      // Normal Text Message
+      const payload: PeerData = { type: 'message', payload: newMessage };
+      if (currentUser.isHost) broadcast(payload);
+      else sendToHost(payload);
+    }
+
+    if (currentUser.isHost && type === MessageType.TEXT && typeof content === 'string' && (content.toLowerCase().includes('@nexus') || content.toLowerCase().includes('@ai'))) {
       setIsAiThinking(true);
       const currentMessages = [...messagesRef.current, newMessage]; // Use Ref for latest
       try {
@@ -352,7 +404,7 @@ export const usePeerChat = () => {
     const attemptConnection = () => {
       const conn = peer.connect(roomId, {
         reliable: true,
-        serialization: 'json',
+        // serialization: 'json', // REMOVED to allow binary
         metadata: { userId, username }
       });
       hostConnectionRef.current = conn;
